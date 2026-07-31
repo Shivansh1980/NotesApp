@@ -34,6 +34,7 @@ export default function App() {
   const theme = useEditorStore((state) => state.theme);
   const homeOpen = useEditorStore((state) => state.homeOpen);
   const setHomeOpen = useEditorStore((state) => state.setHomeOpen);
+  const showHome = homeOpen || !currentPageId;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -167,7 +168,7 @@ export default function App() {
         workspaces={workspaces.data ?? []}
         pages={pages.data ?? []}
         currentWorkspaceId={currentWorkspaceId}
-        currentPageId={homeOpen ? null : currentPageId}
+        currentPageId={showHome ? null : currentPageId}
         onWorkspaceChange={setWorkspace}
         onCreateWorkspace={() => createWorkspace.mutate()}
         onCreatePage={(parentPageId) => createPage.mutate(parentPageId)}
@@ -180,7 +181,7 @@ export default function App() {
         onOpenPageNewTab={openPageNewTab}
         onUpdatePage={(page, payload) => updatePage.mutate({ pageId: page.id, payload })}
       >
-        {homeOpen ? (
+        {showHome ? (
           <HomeView
             pages={pages.data ?? []}
             onSelectPage={selectPage}
