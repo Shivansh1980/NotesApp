@@ -1,0 +1,22 @@
+# Python
+**/__pycache__/
+**/.pytest_cache/
+**/*.py[cod]
+backend/.venv/
+backend/.env
+backend/notes_app.db
+backend/test_notes_app.db
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# Local runtime output
+*.log
+artifacts/
