@@ -5,6 +5,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
+import httpx
+
 test_database_path = Path(tempfile.gettempdir()) / f"notes-app-test-{uuid4()}.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{test_database_path.as_posix()}"
 os.environ["SECRET_KEY"] = "test-secret"
@@ -17,7 +19,11 @@ from app.core.database import Base, SessionLocal, engine  # noqa: E402
 from app.core.security import decode_token  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import CalendarConnection, User  # noqa: E402
-from app.services.calendar_service import CalendarService  # noqa: E402
+from app.services import calendar_service  # noqa: E402
+from app.services.calendar_service import (  # noqa: E402
+    CalendarService,
+    _request_with_transport_fallback,
+)
 
 
 client = TestClient(app)
@@ -654,3 +660,41 @@ def test_google_calendar_uses_signed_state_and_encrypts_stored_tokens(monkeypatc
         assert service._decrypt(connection.encrypted_access_token) == "plain-access-token"
         assert service._decrypt(connection.encrypted_refresh_token or "") == "plain-refresh-token"
         assert service.status(user)["connected"] is True
+
+
+def test_google_calendar_retries_with_sync_transport_after_async_connect_error(monkeypatch) -> None:
+    request = httpx.Request("GET", "https://www.googleapis.com/calendar/v3/calendars/primary/events")
+    expected_response = httpx.Response(200, json={"items": []}, request=request)
+    sync_calls: list[tuple[str, str, float]] = []
+
+    class FailingAsyncClient:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        async def __aenter__(self) -> "FailingAsyncClient":
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def request(self, method: str, url: str, **_: object) -> httpx.Response:
+            raise httpx.ConnectError("async transport unavailable", request=httpx.Request(method, url))
+
+    def fake_sync_request(method: str, url: str, timeout: float, _: dict[str, object]) -> httpx.Response:
+        sync_calls.append((method, url, timeout))
+        return expected_response
+
+    monkeypatch.setattr(calendar_service.httpx, "AsyncClient", FailingAsyncClient)
+    monkeypatch.setattr(calendar_service, "_sync_request", fake_sync_request)
+
+    response = asyncio.run(
+        _request_with_transport_fallback(
+            "GET",
+            str(request.url),
+            timeout=15,
+            headers={"Authorization": "Bearer redacted"},
+        )
+    )
+
+    assert response is expected_response
+    assert sync_calls == [("GET", str(request.url), 15)]

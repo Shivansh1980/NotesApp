@@ -1,6 +1,9 @@
+import asyncio
 import base64
 import hashlib
+import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -19,6 +22,33 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+
+logger = logging.getLogger(__name__)
+
+
+def _sync_request(method: str, url: str, timeout: float, kwargs: dict[str, Any]) -> httpx.Response:
+    with httpx.Client(timeout=timeout, trust_env=True) as client:
+        return client.request(method, url, **kwargs)
+
+
+async def _request_with_transport_fallback(
+    method: str,
+    url: str,
+    *,
+    timeout: float,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Retry through the sync transport when a hosting proxy rejects async sockets."""
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout, trust_env=True) as client:
+            return await client.request(method, url, **kwargs)
+    except httpx.TransportError as async_error:
+        logger.warning("Async request transport failed for %s; retrying through sync transport", url)
+        try:
+            return await asyncio.to_thread(_sync_request, method, url, timeout, kwargs)
+        except httpx.HTTPError as sync_error:
+            raise sync_error from async_error
 
 
 class CalendarService:
@@ -101,12 +131,19 @@ class CalendarService:
             "orderBy": "startTime",
             "maxResults": str(max(1, min(max_results, 25))),
         }
-        async with httpx.AsyncClient(timeout=15) as client:
-            response = await client.get(
+        try:
+            response = await _request_with_transport_fallback(
+                "GET",
                 GOOGLE_EVENTS_URL,
+                timeout=15,
                 params=params,
                 headers={"Authorization": f"Bearer {access_token}"},
             )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Google Calendar is unavailable",
+            ) from exc
         if response.status_code == 401:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Reconnect Google Calendar")
         if response.is_error:
@@ -120,8 +157,12 @@ class CalendarService:
             return
         token = self._decrypt(connection.encrypted_refresh_token or connection.encrypted_access_token)
         try:
-            async with httpx.AsyncClient(timeout=8) as client:
-                await client.post(GOOGLE_REVOKE_URL, data={"token": token})
+            await _request_with_transport_fallback(
+                "POST",
+                GOOGLE_REVOKE_URL,
+                timeout=8,
+                data={"token": token},
+            )
         except httpx.HTTPError:
             pass
         self.db.delete(connection)
@@ -176,8 +217,12 @@ class CalendarService:
 
     async def _post_token(self, data: dict[str, object]) -> dict:
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.post(GOOGLE_TOKEN_URL, data=data)
+            response = await _request_with_transport_fallback(
+                "POST",
+                GOOGLE_TOKEN_URL,
+                timeout=15,
+                data=data,
+            )
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Google OAuth is unavailable") from exc
         if response.is_error:
