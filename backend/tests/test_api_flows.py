@@ -8,8 +8,19 @@ from uuid import uuid4
 import httpx
 
 test_database_path = Path(tempfile.gettempdir()) / f"notes-app-test-{uuid4()}.db"
-os.environ["DATABASE_URL"] = f"sqlite:///{test_database_path.as_posix()}"
-os.environ["SECRET_KEY"] = "test-secret"
+os.environ.update(
+    {
+        "ENVIRONMENT": "test",
+        "DATABASE_URL": f"sqlite:///{test_database_path.as_posix()}",
+        "SECRET_KEY": "test-secret",
+        "ALLOWED_HOSTS": "*",
+        "GOOGLE_CALENDAR_CLIENT_ID": "",
+        "GOOGLE_CALENDAR_CLIENT_SECRET": "",
+        "GOOGLE_CALENDAR_REDIRECT_URI": "",
+        "OAUTH_TOKEN_ENCRYPTION_KEY": "",
+        "OUTBOUND_HTTP_PROXY": "",
+    }
+)
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
