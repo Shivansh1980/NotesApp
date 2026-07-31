@@ -1,9 +1,14 @@
 import os
+import tempfile
+from pathlib import Path
+from uuid import uuid4
 
-os.environ["DATABASE_URL"] = "sqlite:///./test_notes_app.db"
+test_database_path = Path(tempfile.gettempdir()) / f"notes-app-test-{uuid4()}.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{test_database_path.as_posix()}"
 os.environ["SECRET_KEY"] = "test-secret"
 
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 
 from app.core.database import Base, engine  # noqa: E402
 from app.main import app  # noqa: E402
@@ -191,6 +196,62 @@ def test_page_blocks_are_returned_in_visual_order_key_sequence() -> None:
         for item in blocks.json()
     ]
     assert visible_text == ["", "Parent", "x = y", "After", "Custom alphabet", "Unknown order character"]
+
+
+def test_populated_workspace_delete_cascades_all_owned_content() -> None:
+    headers = auth_headers("cascade@example.com")
+    workspace_id = client.get("/api/workspaces", headers=headers).json()[0]["id"]
+    page = client.post(
+        "/api/pages",
+        headers=headers,
+        json={"workspace_id": workspace_id, "title": "Cascade test", "order_key": "a1"},
+    )
+    assert page.status_code == 201, page.text
+    page_id = page.json()["id"]
+    block_id = client.get(f"/api/pages/{page_id}/blocks", headers=headers).json()[0]["id"]
+
+    comment = client.post(
+        "/api/comments",
+        headers=headers,
+        json={"page_id": page_id, "block_id": block_id, "text": "Delete with workspace"},
+    )
+    assert comment.status_code == 201, comment.text
+    upload = client.post(
+        "/api/uploads/metadata",
+        headers=headers,
+        json={
+            "workspace_id": workspace_id,
+            "file_name": "cascade.txt",
+            "file_type": "text/plain",
+            "file_size": 7,
+            "storage_key": "manual/cascade.txt",
+            "public_url": "/uploads/manual/cascade.txt",
+        },
+    )
+    assert upload.status_code == 201, upload.text
+
+    deleted = client.delete(f"/api/workspaces/{workspace_id}", headers=headers)
+    assert deleted.status_code == 204, deleted.text
+
+    with engine.connect() as connection:
+        for table, column in (
+            ("workspace_members", "workspace_id"),
+            ("pages", "workspace_id"),
+            ("uploads", "workspace_id"),
+        ):
+            count = connection.execute(
+                text(f"SELECT COUNT(*) FROM {table} WHERE {column} = :workspace_id"),
+                {"workspace_id": workspace_id},
+            ).scalar_one()
+            assert count == 0
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM blocks WHERE page_id = :page_id"),
+            {"page_id": page_id},
+        ).scalar_one() == 0
+        assert connection.execute(
+            text("SELECT COUNT(*) FROM comments WHERE page_id = :page_id"),
+            {"page_id": page_id},
+        ).scalar_one() == 0
 
 
 def test_full_declared_api_surface() -> None:

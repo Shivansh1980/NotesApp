@@ -36,7 +36,9 @@ class User(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String(500))
 
-    memberships: Mapped[list["WorkspaceMember"]] = relationship(back_populates="user")
+    memberships: Mapped[list["WorkspaceMember"]] = relationship(
+        back_populates="user", passive_deletes=True
+    )
 
 
 class Workspace(Base, TimestampMixin):
@@ -47,9 +49,9 @@ class Workspace(Base, TimestampMixin):
     owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
     members: Mapped[list["WorkspaceMember"]] = relationship(
-        back_populates="workspace", cascade="all, delete-orphan"
+        back_populates="workspace", cascade="all, delete-orphan", passive_deletes=True
     )
-    pages: Mapped[list["Page"]] = relationship(back_populates="workspace")
+    pages: Mapped[list["Page"]] = relationship(back_populates="workspace", passive_deletes=True)
 
 
 class WorkspaceMember(Base, TimestampMixin):
@@ -93,7 +95,9 @@ class Page(Base, TimestampMixin):
     updated_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
 
     workspace: Mapped[Workspace] = relationship(back_populates="pages")
-    blocks: Mapped[list["Block"]] = relationship(back_populates="page", cascade="all, delete-orphan")
+    blocks: Mapped[list["Block"]] = relationship(
+        back_populates="page", cascade="all, delete-orphan", passive_deletes=True
+    )
 
 
 class Block(Base, TimestampMixin):
