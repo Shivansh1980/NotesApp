@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     ]
     cors_origin_regex: str | None = None
     allowed_hosts: Annotated[list[str], NoDecode] = ["*"]
+    frontend_url: str = "http://localhost:5173"
+    google_calendar_client_id: str | None = None
+    google_calendar_client_secret: str | None = None
+    google_calendar_redirect_uri: str | None = None
+    oauth_token_encryption_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

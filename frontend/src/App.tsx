@@ -15,6 +15,7 @@ import { useAuthStore } from "./store/authStore";
 import { useEditorStore } from "./store/editorStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
 import type { PageTreeNode } from "./types/page.types";
+import type { Workspace } from "./types/workspace.types";
 import "./styles.css";
 import "./notion-parity.css";
 
@@ -34,11 +35,32 @@ export default function App() {
   const theme = useEditorStore((state) => state.theme);
   const homeOpen = useEditorStore((state) => state.homeOpen);
   const setHomeOpen = useEditorStore((state) => state.setHomeOpen);
+  const setSearchTargetBlock = useEditorStore((state) => state.setSearchTargetBlock);
   const showHome = homeOpen || !currentPageId;
+
+  const navigateHome = useCallback(() => {
+    setPage(null);
+    setSearchTargetBlock(null);
+    setHomeOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("page");
+    url.searchParams.delete("block");
+    window.history.replaceState(null, "", url);
+  }, [setHomeOpen, setPage, setSearchTargetBlock]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("calendar")) return;
+    queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
+    queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
+    url.searchParams.delete("calendar");
+    url.searchParams.delete("reason");
+    window.history.replaceState(null, "", url);
+  }, [queryClient]);
 
   useEffect(() => {
     void bootstrap();
@@ -57,8 +79,13 @@ export default function App() {
   const createWorkspace = useMutation({
     mutationFn: () => workspacesApi.create("New workspace"),
     onSuccess(workspace) {
-      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      queryClient.setQueryData<Workspace[]>(["workspaces"], (current = []) => {
+        if (current.some((item) => item.id === workspace.id)) return current;
+        return [workspace, ...current];
+      });
       setWorkspace(workspace.id);
+      setHomeOpen(true);
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
     }
   });
   const createPage = useMutation({
@@ -91,24 +118,40 @@ export default function App() {
   });
   const archivePage = useMutation({
     mutationFn: (pageId: string) => pagesApi.archive(pageId),
+    onMutate(pageId) {
+      const wasActive = useWorkspaceStore.getState().currentPageId === pageId;
+      if (wasActive) navigateHome();
+      return { wasActive };
+    },
     onSuccess(_, pageId) {
       if (currentWorkspaceId) {
         queryClient.invalidateQueries({ queryKey: ["page-tree", currentWorkspaceId] });
         queryClient.invalidateQueries({ queryKey: ["page-trash", currentWorkspaceId] });
       }
-      if (currentPageId === pageId) setPage(null);
+    },
+    onError(_, pageId, context) {
+      if (context?.wasActive) {
+        setPage(pageId);
+        setHomeOpen(false);
+        const url = new URL(window.location.href);
+        url.searchParams.set("page", pageId);
+        url.searchParams.delete("block");
+        window.history.replaceState(null, "", url);
+      }
     }
   });
 
   const selectPage = useCallback(
     (pageId: string) => {
+      setSearchTargetBlock(null);
       setPage(pageId);
       setHomeOpen(false);
       const url = new URL(window.location.href);
       url.searchParams.set("page", pageId);
+      url.searchParams.delete("block");
       window.history.replaceState(null, "", url);
     },
-    [setHomeOpen, setPage]
+    [setHomeOpen, setPage, setSearchTargetBlock]
   );
 
   const copyPageLink = useCallback((page: PageTreeNode) => {
@@ -147,17 +190,23 @@ export default function App() {
   }, [currentWorkspaceId, setWorkspace, workspaces.data]);
 
   useEffect(() => {
-    const flatPages = flattenPages(pages.data ?? []);
-    if (!flatPages.length) return;
+    if (!pages.data) return;
+    const flatPages = flattenPages(pages.data);
+    if (!flatPages.length) {
+      if (currentPageId) navigateHome();
+      return;
+    }
     const pageFromUrl = new URLSearchParams(window.location.search).get("page");
+    const blockFromUrl = new URLSearchParams(window.location.search).get("block");
     if (pageFromUrl && flatPages.some((page) => page.id === pageFromUrl)) {
       if (currentPageId !== pageFromUrl) setPage(pageFromUrl);
+      if (blockFromUrl) setSearchTargetBlock(blockFromUrl);
       return;
     }
     if (!currentPageId || !flatPages.some((page) => page.id === currentPageId)) {
       selectPage(flatPages[0].id);
     }
-  }, [currentPageId, pages.data, selectPage, setPage]);
+  }, [currentPageId, navigateHome, pages.data, selectPage, setPage, setSearchTargetBlock]);
 
   if (!bootstrapped) return <div className="boot-screen" />;
   if (!user) return <AuthPanel />;
@@ -194,6 +243,8 @@ export default function App() {
       <SearchModal workspaceId={currentWorkspaceId} pages={pages.data ?? []} />
       <SettingsModal
         currentWorkspace={workspaces.data?.find((workspace) => workspace.id === currentWorkspaceId) ?? null}
+        workspaces={workspaces.data ?? []}
+        onWorkspaceChange={setWorkspace}
       />
       <TrashModal workspaceId={currentWorkspaceId} />
       <CommentsPanel pageId={currentPageId} />

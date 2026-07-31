@@ -60,3 +60,11 @@ class PageTreeNode(PageResponse):
 class PageDuplicateResponse(BaseModel):
     page: PageResponse
     duplicated_at: datetime
+
+
+class TrashDeleteRequest(BaseModel):
+    page_ids: list[UUID] = Field(min_length=1, max_length=200)
+
+
+class TrashDeleteResponse(BaseModel):
+    deleted_count: int

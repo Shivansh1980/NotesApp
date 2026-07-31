@@ -55,10 +55,11 @@ export function SearchModal({ workspaceId, pages }: SearchModalProps) {
   const [createdByMe, setCreatedByMe] = useState(false);
   const [currentPageOnly, setCurrentPageOnly] = useState(false);
   const [resultType, setResultType] = useState<"all" | "page" | "block">("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const debounced = useDebounce(query, 180);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const flatPages = useMemo(() => flattenPages(pages), [pages]);
+  const setSearchTargetBlock = useEditorStore((state) => state.setSearchTargetBlock);
   const results = useQuery({
     queryKey: ["search", workspaceId, debounced],
     queryFn: () => searchApi.workspace(workspaceId as string, debounced),
@@ -73,7 +74,10 @@ export function SearchModal({ workspaceId, pages }: SearchModalProps) {
             .slice()
             .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
             .map(pageToResult);
-    return base.filter((item) => {
+    const uniqueByPage = base.filter(
+      (item, index) => base.findIndex((candidate) => (candidate.page_id ?? candidate.id) === (item.page_id ?? item.id)) === index
+    );
+    return uniqueByPage.filter((item) => {
       if (titleOnly && !item.title.toLowerCase().includes(debounced.trim().toLowerCase())) return false;
       if (createdByMe && item.created_by !== user?.id) return false;
       if (currentPageOnly && (item.page_id ?? item.id) !== currentPageId) return false;
@@ -81,12 +85,18 @@ export function SearchModal({ workspaceId, pages }: SearchModalProps) {
       return true;
     });
   }, [createdByMe, currentPageId, currentPageOnly, debounced, flatPages, resultType, results.data?.results, titleOnly, user?.id]);
-  const selected = visibleResults.find((result) => result.id === selectedId) ?? visibleResults[0] ?? null;
-  const selectTargetPage = (pageId: string) => {
+  const resultKey = (result: SearchResult) => `${result.type}:${result.id}`;
+  const selected = visibleResults.find((result) => resultKey(result) === selectedKey) ?? visibleResults[0] ?? null;
+  const selectTarget = (result: SearchResult) => {
+    const pageId = result.page_id ?? result.id;
+    const blockId = result.type === "block" ? result.id : null;
+    setSearchTargetBlock(blockId);
     setPage(pageId);
     setHomeOpen(false);
     const url = new URL(window.location.href);
     url.searchParams.set("page", pageId);
+    if (blockId) url.searchParams.set("block", blockId);
+    else url.searchParams.delete("block");
     window.history.replaceState(null, "", url);
     setOpen(false);
   };
@@ -102,14 +112,20 @@ export function SearchModal({ workspaceId, pages }: SearchModalProps) {
   }, [open, setOpen]);
 
   useEffect(() => {
-    setSelectedId(visibleResults[0]?.id ?? null);
+    setSelectedKey(visibleResults[0] ? resultKey(visibleResults[0]) : null);
   }, [visibleResults]);
 
   if (!open) return null;
 
   return (
     <div className="modal-backdrop" onMouseDown={() => setOpen(false)}>
-      <section className="search-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <section
+        className="search-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search workspace"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="search-command">
           <div className="search-input-row">
             <Search size={22} />
@@ -118,21 +134,35 @@ export function SearchModal({ workspaceId, pages }: SearchModalProps) {
               value={query}
               placeholder="Search or ask a question..."
               onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (!visibleResults.length) return;
+                const selectedIndex = Math.max(0, visibleResults.findIndex((result) => resultKey(result) === selectedKey));
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  const direction = event.key === "ArrowDown" ? 1 : -1;
+                  const nextIndex = (selectedIndex + direction + visibleResults.length) % visibleResults.length;
+                  setSelectedKey(resultKey(visibleResults[nextIndex]));
+                }
+                if (event.key === "Enter" && selected) {
+                  event.preventDefault();
+                  selectTarget(selected);
+                }
+              }}
             />
             <IconButton label="Close search" onClick={() => setOpen(false)}>
               <X size={16} />
             </IconButton>
           </div>
           <div className="search-filter-row">
-            <button className={titleOnly ? "active" : ""} type="button" onClick={() => setTitleOnly((value) => !value)}>
+            <button className={titleOnly ? "active" : ""} type="button" aria-pressed={titleOnly} onClick={() => setTitleOnly((value) => !value)}>
               <Type size={16} />
               Title only
             </button>
-            <button className={createdByMe ? "active" : ""} type="button" onClick={() => setCreatedByMe((value) => !value)}>
+            <button className={createdByMe ? "active" : ""} type="button" aria-pressed={createdByMe} onClick={() => setCreatedByMe((value) => !value)}>
               <UserRound size={16} />
               Created by me
             </button>
-            <button className={currentPageOnly ? "active" : ""} type="button" onClick={() => setCurrentPageOnly((value) => !value)}>
+            <button className={currentPageOnly ? "active" : ""} type="button" aria-pressed={currentPageOnly} onClick={() => setCurrentPageOnly((value) => !value)}>
               <FileText size={16} />
               Current page
             </button>
@@ -159,12 +189,10 @@ export function SearchModal({ workspaceId, pages }: SearchModalProps) {
               return (
                 <button
                   key={`${result.type}-${result.id}`}
-                  className={selected?.id === result.id ? "selected" : ""}
+                  className={selected && resultKey(selected) === resultKey(result) ? "selected" : ""}
                   type="button"
-                  onMouseEnter={() => setSelectedId(result.id)}
-                  onClick={() => {
-                    selectTargetPage(targetPageId);
-                  }}
+                  onMouseEnter={() => setSelectedKey(resultKey(result))}
+                  onClick={() => selectTarget(result)}
                 >
                   <FileText size={19} />
                   <span>
@@ -183,11 +211,13 @@ export function SearchModal({ workspaceId, pages }: SearchModalProps) {
                   <IconButton label="Copy link" onClick={() => {
                     const url = new URL(window.location.href);
                     url.searchParams.set("page", selected.page_id ?? selected.id);
+                    if (selected.type === "block") url.searchParams.set("block", selected.id);
+                    else url.searchParams.delete("block");
                     void navigator.clipboard.writeText(url.toString());
                   }}>
                     <FileText size={15} />
                   </IconButton>
-                  <IconButton label="Open" onClick={() => selectTargetPage(selected.page_id ?? selected.id)}>
+                  <IconButton label="Open" onClick={() => selectTarget(selected)}>
                     <PanelRight size={15} />
                   </IconButton>
                 </div>

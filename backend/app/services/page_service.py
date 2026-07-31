@@ -67,13 +67,15 @@ class PageService:
 
     def list_trashed_pages(self, user: User, workspace_id: str) -> list[Page]:
         self.permissions.require_workspace(user, workspace_id)
-        return list(
+        pages = list(
             self.db.scalars(
                 select(Page)
                 .where(Page.workspace_id == workspace_id, Page.is_archived.is_(True))
                 .order_by(Page.updated_at.desc(), Page.created_at.desc())
             )
         )
+        archived_ids = {page.id for page in pages}
+        return [page for page in pages if not page.parent_page_id or page.parent_page_id not in archived_ids]
 
     def children(self, user: User, page_id: str) -> list[Page]:
         page = self.permissions.require_page(user, page_id)
@@ -121,6 +123,53 @@ class PageService:
         self.db.commit()
         self.db.refresh(page)
         return page
+
+    def permanently_delete(self, user: User, page_id: str) -> int:
+        page = self.db.get(Page, page_id)
+        if not page or not page.is_archived:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trashed page not found")
+        self.permissions.require_workspace(user, page.workspace_id, "editor")
+        deleted_count = self._descendant_count(page)
+        self.db.delete(page)
+        self.db.commit()
+        return deleted_count
+
+    def permanently_delete_selected(self, user: User, workspace_id: str, page_ids: list[str]) -> int:
+        self.permissions.require_workspace(user, workspace_id, "editor")
+        unique_ids = list(dict.fromkeys(page_ids))
+        pages = list(
+            self.db.scalars(
+                select(Page).where(
+                    Page.workspace_id == workspace_id,
+                    Page.id.in_(unique_ids),
+                    Page.is_archived.is_(True),
+                )
+            )
+        )
+        if len(pages) != len(unique_ids):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more trashed pages were not found")
+
+        selected_ids = {page.id for page in pages}
+        roots = [page for page in pages if not self._has_selected_ancestor(page, selected_ids)]
+        deleted_count = sum(self._descendant_count(page) for page in roots)
+        for page in roots:
+            self.db.delete(page)
+        self.db.commit()
+        return deleted_count
+
+    def empty_trash(self, user: User, workspace_id: str) -> int:
+        self.permissions.require_workspace(user, workspace_id, "editor")
+        pages = list(
+            self.db.scalars(
+                select(Page).where(Page.workspace_id == workspace_id, Page.is_archived.is_(True))
+            )
+        )
+        archived_ids = {page.id for page in pages}
+        roots = [page for page in pages if not page.parent_page_id or page.parent_page_id not in archived_ids]
+        for page in roots:
+            self.db.delete(page)
+        self.db.commit()
+        return len(pages)
 
     def duplicate(self, user: User, page_id: str) -> Page:
         source = self.permissions.require_page(user, page_id, "editor")
@@ -201,6 +250,19 @@ class PageService:
             parent = self.db.get(Page, parent_id)
             parent_id = parent.parent_page_id if parent else None
         return False
+
+    def _has_selected_ancestor(self, page: Page, selected_ids: set[str]) -> bool:
+        parent_id = page.parent_page_id
+        while parent_id:
+            if parent_id in selected_ids:
+                return True
+            parent = self.db.get(Page, parent_id)
+            parent_id = parent.parent_page_id if parent else None
+        return False
+
+    def _descendant_count(self, page: Page) -> int:
+        children = list(self.db.scalars(select(Page).where(Page.parent_page_id == page.id)))
+        return 1 + sum(self._descendant_count(child) for child in children)
 
     @staticmethod
     def _serialize_tree(node: dict) -> dict:

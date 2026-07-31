@@ -33,5 +33,19 @@ export const pagesApi = {
   },
   trash(workspaceId: string) {
     return request<Page[]>(`/api/workspaces/${workspaceId}/pages/trash`);
+  },
+  permanentlyDelete(pageId: string) {
+    return request<{ deleted_count: number }>(`/api/pages/${pageId}/permanent`, { method: "DELETE" });
+  },
+  permanentlyDeleteSelected(workspaceId: string, pageIds: string[]) {
+    return request<{ deleted_count: number }>(`/api/workspaces/${workspaceId}/pages/trash/permanent-delete`, {
+      method: "POST",
+      body: JSON.stringify({ page_ids: pageIds })
+    });
+  },
+  emptyTrash(workspaceId: string) {
+    return request<{ deleted_count: number }>(`/api/workspaces/${workspaceId}/pages/trash`, {
+      method: "DELETE"
+    });
   }
 };

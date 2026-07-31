@@ -4,7 +4,15 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import User
-from app.schemas.page import PageCreate, PageDuplicateResponse, PageResponse, PageTreeNode, PageUpdate
+from app.schemas.page import (
+    PageCreate,
+    PageDuplicateResponse,
+    PageResponse,
+    PageTreeNode,
+    PageUpdate,
+    TrashDeleteRequest,
+    TrashDeleteResponse,
+)
 from app.services.page_service import PageService
 
 
@@ -79,3 +87,37 @@ def duplicate_page(page_id: str, db: Session = Depends(get_db), current_user: Us
 @router.post("/pages/{page_id}/restore", response_model=PageResponse)
 def restore_page(page_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return PageService(db).restore(current_user, page_id)
+
+
+@router.delete("/pages/{page_id}/permanent", response_model=TrashDeleteResponse)
+def permanently_delete_page(
+    page_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return {"deleted_count": PageService(db).permanently_delete(current_user, page_id)}
+
+
+@router.post("/workspaces/{workspace_id}/pages/trash/permanent-delete", response_model=TrashDeleteResponse)
+def permanently_delete_selected_pages(
+    workspace_id: str,
+    payload: TrashDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return {
+        "deleted_count": PageService(db).permanently_delete_selected(
+            current_user,
+            workspace_id,
+            [str(page_id) for page_id in payload.page_ids],
+        )
+    }
+
+
+@router.delete("/workspaces/{workspace_id}/pages/trash", response_model=TrashDeleteResponse)
+def empty_workspace_trash(
+    workspace_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return {"deleted_count": PageService(db).empty_trash(current_user, workspace_id)}

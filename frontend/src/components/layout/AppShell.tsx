@@ -11,7 +11,7 @@ type AppShellProps = {
   pages: PageTreeNode[];
   currentWorkspaceId: string | null;
   currentPageId: string | null;
-  onWorkspaceChange: (workspaceId: string) => void;
+  onWorkspaceChange: (workspaceId: string | null) => void;
   onCreateWorkspace: () => void;
   onCreatePage: (parentPageId?: string | null) => void;
   onSelectPage: (pageId: string) => void;

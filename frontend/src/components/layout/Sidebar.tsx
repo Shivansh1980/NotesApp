@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { PageTree } from "./PageTree";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { CalendarConnection } from "../calendar/CalendarConnection";
 import { useAuthStore } from "../../store/authStore";
 import { useEditorStore } from "../../store/editorStore";
 import type { PageTreeNode } from "../../types/page.types";
@@ -14,7 +15,7 @@ type SidebarProps = {
   pages: PageTreeNode[];
   currentWorkspaceId: string | null;
   currentPageId: string | null;
-  onWorkspaceChange: (workspaceId: string) => void;
+  onWorkspaceChange: (workspaceId: string | null) => void;
   onCreateWorkspace: () => void;
   onCreatePage: (parentPageId?: string | null) => void;
   onSelectPage: (pageId: string) => void;
@@ -115,6 +116,8 @@ export function Sidebar({
           <UserCircle size={18} />
         </button>
       </div>
+      <div className="sidebar-section-label">Meetings</div>
+      <CalendarConnection compact />
       <div className="sidebar-section-label">Pages</div>
       <PageTree
         pages={pages}

@@ -95,6 +95,8 @@ export function BlockEditor({ pageId, workspaceId, blocks, locked = false }: Blo
   const selectedBlockIds = useEditorStore((state) => state.selectedBlockIds);
   const setSelectedBlocks = useEditorStore((state) => state.setSelectedBlocks);
   const setFocusedBlock = useEditorStore((state) => state.setFocusedBlock);
+  const searchTargetBlockId = useEditorStore((state) => state.searchTargetBlockId);
+  const setSearchTargetBlock = useEditorStore((state) => state.setSearchTargetBlock);
   const slashMenu = useEditorStore((state) => state.slashMenu);
   const setSlashMenu = useEditorStore((state) => state.setSlashMenu);
   const { queueBlock, flush } = useAutosave((savedBlock) => {
@@ -115,6 +117,25 @@ export function BlockEditor({ pageId, workspaceId, blocks, locked = false }: Blo
   }, [blocks, pageId]);
 
   const orderedBlocks = useMemo(() => sortByOrderKey(localBlocks), [localBlocks]);
+
+  useEffect(() => {
+    if (!searchTargetBlockId || !orderedBlocks.some((block) => block.id === searchTargetBlockId)) return;
+    let clearTimer = 0;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(`[data-block-id="${searchTargetBlockId}"]`);
+      if (!target) return;
+      target.classList.add("search-target");
+      target.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+      clearTimer = window.setTimeout(() => {
+        target.classList.remove("search-target");
+        setSearchTargetBlock(null);
+      }, 2800);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (clearTimer) window.clearTimeout(clearTimer);
+    };
+  }, [orderedBlocks, searchTargetBlockId, setSearchTargetBlock]);
 
   const cloneBlocks = useCallback((items: Block[]) => structuredClone(sortByOrderKey(items)), []);
 
