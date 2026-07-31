@@ -1,6 +1,8 @@
+import asyncio
 import os
 import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 test_database_path = Path(tempfile.gettempdir()) / f"notes-app-test-{uuid4()}.db"
@@ -10,8 +12,12 @@ os.environ["SECRET_KEY"] = "test-secret"
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
-from app.core.database import Base, engine  # noqa: E402
+from app.core.config import get_settings  # noqa: E402
+from app.core.database import Base, SessionLocal, engine  # noqa: E402
+from app.core.security import decode_token  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models import CalendarConnection, User  # noqa: E402
+from app.services.calendar_service import CalendarService  # noqa: E402
 
 
 client = TestClient(app)
@@ -334,7 +340,7 @@ def test_full_declared_api_surface() -> None:
     trash = client.get(f"/api/workspaces/{workspace_id}/pages/trash", headers=headers)
     assert trash.status_code == 200
     trash_ids = {item["id"] for item in trash.json()}
-    assert {duplicate_page_id, nested_page_id}.issubset(trash_ids)
+    assert trash_ids == {duplicate_page_id}
     assert client.get(f"/api/pages/{nested_page_id}", headers=headers).status_code == 404
     assert client.post(f"/api/pages/{duplicate_page_id}/restore", headers=headers).status_code == 200
     assert client.get(f"/api/pages/{nested_page_id}", headers=headers).status_code == 200
@@ -422,3 +428,229 @@ def test_full_declared_api_surface() -> None:
     assert workspace_search.status_code == 200
     assert all("created_by" in result for result in workspace_search.json()["results"])
     assert client.get(f"/api/pages/{duplicate_page_id}/search?q=Block", headers=headers).status_code == 200
+
+
+def test_workspace_search_returns_one_exact_destination_per_page_and_never_crosses_workspaces() -> None:
+    owner_payload, owner_headers = register_user("search-owner@example.com")
+    _, outsider_headers = register_user("search-outsider@example.com")
+    workspace_id = client.get("/api/workspaces", headers=owner_headers).json()[0]["id"]
+
+    page = client.post(
+        "/api/pages",
+        headers=owner_headers,
+        json={"workspace_id": workspace_id, "title": "Vector notes", "order_key": "a1"},
+    )
+    assert page.status_code == 201, page.text
+    page_id = page.json()["id"]
+    default_block = client.get(f"/api/pages/{page_id}/blocks", headers=owner_headers).json()[0]
+    first_match = client.patch(
+        f"/api/blocks/{default_block['id']}",
+        headers=owner_headers,
+        json={"content": [{"text": "Exact target phrase is here", "marks": {}}]},
+    )
+    assert first_match.status_code == 200, first_match.text
+    second_match = client.post(
+        "/api/blocks",
+        headers=owner_headers,
+        json={
+            "page_id": page_id,
+            "type": "paragraph",
+            "content": [{"text": "Another exact target phrase", "marks": {}}],
+            "props": {},
+            "order_key": "a2",
+        },
+    )
+    assert second_match.status_code == 201, second_match.text
+
+    search = client.get(
+        f"/api/search?workspace_id={workspace_id}&q=exact%20target",
+        headers=owner_headers,
+    )
+    assert search.status_code == 200, search.text
+    results = search.json()["results"]
+    assert len(results) == 1
+    assert results[0]["type"] == "block"
+    assert results[0]["page_id"] == page_id
+    assert results[0]["id"] in {first_match.json()["id"], second_match.json()["id"]}
+    assert "exact target" in results[0]["snippet"].casefold()
+    assert results[0]["created_by"] == owner_payload["user"]["id"]
+
+    title_search = client.get(
+        f"/api/search?workspace_id={workspace_id}&q=vector",
+        headers=owner_headers,
+    )
+    assert title_search.status_code == 200, title_search.text
+    assert [(item["type"], item["id"]) for item in title_search.json()["results"]] == [("page", page_id)]
+
+    forbidden = client.get(
+        f"/api/search?workspace_id={workspace_id}&q=exact",
+        headers=outsider_headers,
+    )
+    assert forbidden.status_code == 403
+
+    archived = client.delete(f"/api/pages/{page_id}", headers=owner_headers)
+    assert archived.status_code == 204
+    hidden = client.get(
+        f"/api/search?workspace_id={workspace_id}&q=exact",
+        headers=owner_headers,
+    )
+    assert hidden.status_code == 200
+    assert hidden.json()["results"] == []
+
+
+def test_search_indexes_math_and_tables_without_duplicate_page_results() -> None:
+    headers = auth_headers("structured-search@example.com")
+    workspace_id = client.get("/api/workspaces", headers=headers).json()[0]["id"]
+
+    math_page = client.post(
+        "/api/pages",
+        headers=headers,
+        json={"workspace_id": workspace_id, "title": "Equations", "order_key": "a1"},
+    ).json()
+    math_block = client.post(
+        "/api/blocks",
+        headers=headers,
+        json={
+            "page_id": math_page["id"],
+            "type": "math",
+            "content": [],
+            "props": {"latex": "softmax(z_i) = e^{z_i} / sum_j e^{z_j}"},
+            "order_key": "a2",
+        },
+    )
+    assert math_block.status_code == 201, math_block.text
+
+    table_page = client.post(
+        "/api/pages",
+        headers=headers,
+        json={"workspace_id": workspace_id, "title": "Metrics", "order_key": "a2"},
+    ).json()
+    table_block = client.post(
+        "/api/blocks",
+        headers=headers,
+        json={
+            "page_id": table_page["id"],
+            "type": "table",
+            "content": [],
+            "props": {"rows": [["model", "precision"], ["alpha", "0.98"]]},
+            "order_key": "a2",
+        },
+    )
+    assert table_block.status_code == 201, table_block.text
+
+    math_search = client.get(
+        f"/api/search?workspace_id={workspace_id}&q=softmax",
+        headers=headers,
+    )
+    assert math_search.status_code == 200
+    assert [(item["page_id"], item["id"]) for item in math_search.json()["results"]] == [
+        (math_page["id"], math_block.json()["id"])
+    ]
+
+    table_search = client.get(
+        f"/api/search?workspace_id={workspace_id}&q=precision",
+        headers=headers,
+    )
+    assert table_search.status_code == 200
+    assert [(item["page_id"], item["id"]) for item in table_search.json()["results"]] == [
+        (table_page["id"], table_block.json()["id"])
+    ]
+
+
+def test_trash_lists_roots_and_supports_selected_and_full_permanent_deletion() -> None:
+    headers = auth_headers("trash@example.com")
+    workspace_id = client.get("/api/workspaces", headers=headers).json()[0]["id"]
+
+    parent = client.post(
+        "/api/pages",
+        headers=headers,
+        json={"workspace_id": workspace_id, "title": "Parent", "order_key": "a1"},
+    ).json()
+    child = client.post(
+        "/api/pages",
+        headers=headers,
+        json={
+            "workspace_id": workspace_id,
+            "parent_page_id": parent["id"],
+            "title": "Child",
+            "order_key": "a1",
+        },
+    ).json()
+    standalone = client.post(
+        "/api/pages",
+        headers=headers,
+        json={"workspace_id": workspace_id, "title": "Standalone", "order_key": "a2"},
+    ).json()
+    assert client.delete(f"/api/pages/{parent['id']}", headers=headers).status_code == 204
+    assert client.delete(f"/api/pages/{standalone['id']}", headers=headers).status_code == 204
+
+    trash = client.get(f"/api/workspaces/{workspace_id}/pages/trash", headers=headers)
+    assert trash.status_code == 200
+    assert {item["id"] for item in trash.json()} == {parent["id"], standalone["id"]}
+
+    selected = client.post(
+        f"/api/workspaces/{workspace_id}/pages/trash/permanent-delete",
+        headers=headers,
+        json={"page_ids": [parent["id"], child["id"]]},
+    )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["deleted_count"] == 2
+    assert client.get(f"/api/pages/{parent['id']}", headers=headers).status_code == 404
+
+    emptied = client.delete(f"/api/workspaces/{workspace_id}/pages/trash", headers=headers)
+    assert emptied.status_code == 200, emptied.text
+    assert emptied.json()["deleted_count"] == 1
+    assert client.get(f"/api/workspaces/{workspace_id}/pages/trash", headers=headers).json() == []
+
+
+def test_google_calendar_is_private_and_reports_missing_configuration() -> None:
+    headers = auth_headers("calendar@example.com")
+    status_response = client.get("/api/integrations/google-calendar/status", headers=headers)
+    assert status_response.status_code == 200
+    assert status_response.json() == {"configured": False, "connected": False, "provider": "google"}
+    assert client.post("/api/integrations/google-calendar/authorize", headers=headers).status_code == 503
+    assert client.get("/api/integrations/google-calendar/events", headers=headers).status_code == 409
+    assert client.delete("/api/integrations/google-calendar", headers=headers).status_code == 204
+    assert client.get("/api/integrations/google-calendar/status").status_code == 401
+
+
+def test_google_calendar_uses_signed_state_and_encrypts_stored_tokens(monkeypatch) -> None:
+    registration, _ = register_user("calendar-oauth@example.com")
+    user_id = registration["user"]["id"]
+    settings = get_settings()
+    monkeypatch.setattr(settings, "google_calendar_client_id", "client-id.apps.googleusercontent.com")
+    monkeypatch.setattr(settings, "google_calendar_client_secret", "client-secret")
+    monkeypatch.setattr(
+        settings,
+        "google_calendar_redirect_uri",
+        "https://api.example.com/api/integrations/google-calendar/callback",
+    )
+
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        assert user is not None
+        service = CalendarService(db)
+        authorization_url = service.authorization_url(user)
+        query = parse_qs(urlparse(authorization_url).query)
+        assert query["client_id"] == ["client-id.apps.googleusercontent.com"]
+        assert query["access_type"] == ["offline"]
+        assert query["scope"] == ["https://www.googleapis.com/auth/calendar.readonly"]
+        assert decode_token(query["state"][0], expected_type="google_calendar") == user_id
+
+        async def fake_post_token(_: dict[str, object]) -> dict[str, object]:
+            return {
+                "access_token": "plain-access-token",
+                "refresh_token": "plain-refresh-token",
+                "expires_in": 3600,
+                "scope": "https://www.googleapis.com/auth/calendar.readonly",
+            }
+
+        monkeypatch.setattr(service, "_post_token", fake_post_token)
+        asyncio.run(service.connect("authorization-code", query["state"][0]))
+
+        connection = db.query(CalendarConnection).filter_by(user_id=user_id, provider="google").one()
+        assert connection.encrypted_access_token != "plain-access-token"
+        assert connection.encrypted_refresh_token != "plain-refresh-token"
+        assert service._decrypt(connection.encrypted_access_token) == "plain-access-token"
+        assert service._decrypt(connection.encrypted_refresh_token or "") == "plain-refresh-token"
+        assert service.status(user)["connected"] is True

@@ -7,8 +7,8 @@ type Mode = "login" | "register";
 export function AuthPanel() {
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("demo@example.com");
-  const [password, setPassword] = useState("password123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const login = useAuthStore((state) => state.login);
   const register = useAuthStore((state) => state.register);
@@ -54,6 +54,8 @@ export function AuthPanel() {
             Email
             <input
               value={email}
+              placeholder="you@example.com"
+              required
               onChange={(event) => setEmail(event.target.value)}
               type="email"
               autoComplete="email"
@@ -63,6 +65,8 @@ export function AuthPanel() {
             Password
             <input
               value={password}
+              placeholder="Password"
+              required
               onChange={(event) => setPassword(event.target.value)}
               type="password"
               autoComplete={mode === "login" ? "current-password" : "new-password"}

@@ -13,7 +13,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setWorkspace(workspaceId) {
     if (workspaceId) localStorage.setItem("notes.currentWorkspaceId", workspaceId);
     else localStorage.removeItem("notes.currentWorkspaceId");
-    set({ currentWorkspaceId: workspaceId });
+    localStorage.removeItem("notes.currentPageId");
+    set({ currentWorkspaceId: workspaceId, currentPageId: null });
   },
   setPage(pageId) {
     if (pageId) localStorage.setItem("notes.currentPageId", pageId);

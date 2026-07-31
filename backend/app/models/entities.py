@@ -41,6 +41,21 @@ class User(Base, TimestampMixin):
     )
 
 
+class CalendarConnection(Base, TimestampMixin):
+    __tablename__ = "calendar_connections"
+    __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_calendar_connection_user_provider"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(30), default="google", nullable=False)
+    encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_refresh_token: Mapped[str | None] = mapped_column(Text)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scopes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+
 class Workspace(Base, TimestampMixin):
     __tablename__ = "workspaces"
 

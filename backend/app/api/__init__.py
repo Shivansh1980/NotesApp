@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api import auth, blocks, comments, pages, search, uploads, workspaces
+from app.api import auth, blocks, calendar, comments, pages, search, uploads, workspaces
 
 
 api_router = APIRouter()
@@ -11,3 +11,4 @@ api_router.include_router(blocks.router)
 api_router.include_router(uploads.router)
 api_router.include_router(search.router)
 api_router.include_router(comments.router)
+api_router.include_router(calendar.router)

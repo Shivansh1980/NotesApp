@@ -1,13 +1,12 @@
-import { Check, ChevronDown, Plus, Sparkles } from "lucide-react";
+import { Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { IconButton } from "../common/IconButton";
 import type { Workspace } from "../../types/workspace.types";
 
 type WorkspaceSwitcherProps = {
   workspaces: Workspace[];
   currentWorkspaceId: string | null;
-  onWorkspaceChange: (workspaceId: string) => void;
+  onWorkspaceChange: (workspaceId: string | null) => void;
   onCreateWorkspace: () => void;
 };
 
@@ -31,7 +30,13 @@ export function WorkspaceSwitcher({
 
   return (
     <div className="workspace-switcher" ref={rootRef}>
-      <button className="workspace-trigger" type="button" onClick={() => setOpen((value) => !value)}>
+      <button
+        className="workspace-trigger"
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
         <span className="workspace-avatar">{currentWorkspace?.name.slice(0, 1).toUpperCase() ?? "N"}</span>
         <span className="workspace-copy">
           <strong>{currentWorkspace?.name ?? "Workspace"}</strong>
@@ -39,18 +44,13 @@ export function WorkspaceSwitcher({
         </span>
         <ChevronDown size={16} />
       </button>
-      <IconButton label="New workspace" onClick={onCreateWorkspace}>
-        <Plus size={16} />
-      </IconButton>
       {open ? (
-        <div className="workspace-menu">
-          <div className="workspace-menu-title">
-            <Sparkles size={14} />
-            Workspaces
-          </div>
+        <div className="workspace-menu" role="menu">
+          <div className="workspace-menu-title">Workspaces</div>
           {workspaces.map((workspace) => (
             <button
               key={workspace.id}
+              className={workspace.id === currentWorkspaceId ? "active" : ""}
               type="button"
               onClick={() => {
                 onWorkspaceChange(workspace.id);
@@ -62,9 +62,19 @@ export function WorkspaceSwitcher({
               {workspace.id === currentWorkspaceId ? <Check size={15} /> : null}
             </button>
           ))}
-          <button className="workspace-create-row" type="button" onClick={onCreateWorkspace}>
+          <button className="workspace-create-row" type="button" onClick={() => {
+            setOpen(false);
+            onCreateWorkspace();
+          }}>
             <Plus size={15} />
             New workspace
+          </button>
+          <button className="workspace-create-row" type="button" onClick={() => {
+            setOpen(false);
+            document.dispatchEvent(new CustomEvent("notes:open-workspace-settings"));
+          }}>
+            <Settings size={15} />
+            Workspace settings
           </button>
         </div>
       ) : null}

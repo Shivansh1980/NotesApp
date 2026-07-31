@@ -11,6 +11,7 @@ type SlashState = {
 type EditorState = {
   selectedBlockIds: string[];
   focusedBlockId: string | null;
+  searchTargetBlockId: string | null;
   slashMenu: SlashState;
   saveStatus: SaveStatus;
   searchOpen: boolean;
@@ -21,6 +22,7 @@ type EditorState = {
   theme: "dark" | "light";
   setSelectedBlocks: (ids: string[]) => void;
   setFocusedBlock: (id: string | null) => void;
+  setSearchTargetBlock: (id: string | null) => void;
   setSlashMenu: (state: SlashState) => void;
   setSaveStatus: (status: SaveStatus) => void;
   setSearchOpen: (open: boolean) => void;
@@ -35,6 +37,7 @@ type EditorState = {
 export const useEditorStore = create<EditorState>((set, get) => ({
   selectedBlockIds: [],
   focusedBlockId: null,
+  searchTargetBlockId: null,
   slashMenu: null,
   saveStatus: "saved",
   searchOpen: false,
@@ -45,6 +48,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   theme: (localStorage.getItem("notes.theme") as "dark" | "light" | null) ?? "dark",
   setSelectedBlocks: (ids) => set({ selectedBlockIds: ids }),
   setFocusedBlock: (id) => set({ focusedBlockId: id }),
+  setSearchTargetBlock: (id) => set({ searchTargetBlockId: id }),
   setSlashMenu: (state) => set({ slashMenu: state }),
   setSaveStatus: (status) => set({ saveStatus: status }),
   setSearchOpen: (open) => set({ searchOpen: open }),
