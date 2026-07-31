@@ -26,8 +26,16 @@ GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 logger = logging.getLogger(__name__)
 
 
+def _client_options(timeout: float) -> dict[str, Any]:
+    options: dict[str, Any] = {"timeout": timeout, "trust_env": True}
+    proxy = get_settings().outbound_http_proxy
+    if proxy:
+        options["proxy"] = proxy
+    return options
+
+
 def _sync_request(method: str, url: str, timeout: float, kwargs: dict[str, Any]) -> httpx.Response:
-    with httpx.Client(timeout=timeout, trust_env=True) as client:
+    with httpx.Client(**_client_options(timeout)) as client:
         return client.request(method, url, **kwargs)
 
 
@@ -41,7 +49,7 @@ async def _request_with_transport_fallback(
     """Retry through the sync transport when a hosting proxy rejects async sockets."""
 
     try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=True) as client:
+        async with httpx.AsyncClient(**_client_options(timeout)) as client:
             return await client.request(method, url, **kwargs)
     except httpx.TransportError as async_error:
         logger.warning("Async request transport failed for %s; retrying through sync transport", url)

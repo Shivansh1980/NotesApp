@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     google_calendar_client_secret: str | None = None
     google_calendar_redirect_uri: str | None = None
     oauth_token_encryption_key: str | None = None
+    outbound_http_proxy: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",

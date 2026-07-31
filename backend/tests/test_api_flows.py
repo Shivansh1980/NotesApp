@@ -22,6 +22,7 @@ from app.models import CalendarConnection, User  # noqa: E402
 from app.services import calendar_service  # noqa: E402
 from app.services.calendar_service import (  # noqa: E402
     CalendarService,
+    _client_options,
     _request_with_transport_fallback,
 )
 
@@ -698,3 +699,14 @@ def test_google_calendar_retries_with_sync_transport_after_async_connect_error(m
 
     assert response is expected_response
     assert sync_calls == [("GET", str(request.url), 15)]
+
+
+def test_google_calendar_http_client_uses_configured_outbound_proxy(monkeypatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "outbound_http_proxy", "http://proxy.example.test:3128")
+
+    assert _client_options(8) == {
+        "timeout": 8,
+        "trust_env": True,
+        "proxy": "http://proxy.example.test:3128",
+    }
