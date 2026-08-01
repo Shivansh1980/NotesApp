@@ -1162,6 +1162,14 @@ body {
   gap: 1px;
 }
 
+.calendar-connection:not(.compact) .calendar-event-list {
+  max-height: min(340px, 42vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-right: 3px;
+}
+
 .calendar-event {
   min-height: 42px;
   display: grid;

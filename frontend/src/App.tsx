@@ -14,6 +14,7 @@ import { workspacesApi } from "./api/workspaces.api";
 import { useAuthStore } from "./store/authStore";
 import { useEditorStore } from "./store/editorStore";
 import { useWorkspaceStore } from "./store/workspaceStore";
+import { googleCalendarQueryKeys } from "./hooks/useGoogleCalendar";
 import type { PageTreeNode } from "./types/page.types";
 import type { Workspace } from "./types/workspace.types";
 import "./styles.css";
@@ -55,8 +56,8 @@ export default function App() {
   useEffect(() => {
     const url = new URL(window.location.href);
     if (!url.searchParams.has("calendar")) return;
-    queryClient.invalidateQueries({ queryKey: ["google-calendar-status"] });
-    queryClient.invalidateQueries({ queryKey: ["google-calendar-events"] });
+    queryClient.invalidateQueries({ queryKey: googleCalendarQueryKeys.status });
+    queryClient.invalidateQueries({ queryKey: googleCalendarQueryKeys.eventsRoot });
     url.searchParams.delete("calendar");
     url.searchParams.delete("reason");
     window.history.replaceState(null, "", url);

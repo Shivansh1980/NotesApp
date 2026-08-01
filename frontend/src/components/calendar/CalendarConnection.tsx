@@ -1,9 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CalendarDays, ExternalLink, Link2Off, Loader2, RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { calendarApi } from "../../api/calendar.api";
+import {
+  CALENDAR_MANAGE_EVENT_LIMIT,
+  CALENDAR_SIDEBAR_EVENT_LIMIT,
+  googleCalendarQueryKeys,
+  useGoogleCalendarEvents,
+  useGoogleCalendarStatus
+} from "../../hooks/useGoogleCalendar";
 import type { CalendarEvent } from "../../types/calendar.types";
+import { normalizeUpcomingEvents } from "../../utils/calendarUtils";
 
 type CalendarConnectionProps = {
   compact?: boolean;
@@ -12,12 +20,14 @@ type CalendarConnectionProps = {
 function formatEventTime(event: CalendarEvent): string {
   const start = new Date(event.start);
   if (Number.isNaN(start.getTime())) return event.all_day ? "All day" : "Upcoming";
+  const includeYear = start.getFullYear() !== new Date().getFullYear();
   if (event.all_day) {
-    return start.toLocaleDateString([], { month: "short", day: "numeric" });
+    return start.toLocaleDateString([], { month: "short", day: "numeric", year: includeYear ? "numeric" : undefined });
   }
   return start.toLocaleString([], {
     month: "short",
     day: "numeric",
+    year: includeYear ? "numeric" : undefined,
     hour: "numeric",
     minute: "2-digit"
   });
@@ -26,13 +36,9 @@ function formatEventTime(event: CalendarEvent): string {
 export function CalendarConnection({ compact = false }: CalendarConnectionProps) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
-  const statusQuery = useQuery({ queryKey: ["google-calendar-status"], queryFn: calendarApi.status });
-  const eventsQuery = useQuery({
-    queryKey: ["google-calendar-events"],
-    queryFn: () => calendarApi.events(compact ? 4 : 8),
-    enabled: Boolean(statusQuery.data?.connected),
-    retry: false
-  });
+  const eventLimit = compact ? CALENDAR_SIDEBAR_EVENT_LIMIT : CALENDAR_MANAGE_EVENT_LIMIT;
+  const statusQuery = useGoogleCalendarStatus();
+  const eventsQuery = useGoogleCalendarEvents(eventLimit, Boolean(statusQuery.data?.connected));
   const connect = useMutation({
     mutationFn: calendarApi.authorize,
     onSuccess(response) {
@@ -46,12 +52,12 @@ export function CalendarConnection({ compact = false }: CalendarConnectionProps)
     mutationFn: calendarApi.disconnect,
     onSuccess() {
       setMessage(null);
-      queryClient.setQueryData(["google-calendar-status"], {
+      queryClient.setQueryData(googleCalendarQueryKeys.status, {
         configured: statusQuery.data?.configured ?? false,
         connected: false,
         provider: "google"
       });
-      queryClient.removeQueries({ queryKey: ["google-calendar-events"] });
+      queryClient.removeQueries({ queryKey: googleCalendarQueryKeys.eventsRoot });
     }
   });
 
@@ -81,14 +87,23 @@ export function CalendarConnection({ compact = false }: CalendarConnectionProps)
     );
   }
 
-  const events = eventsQuery.data?.events ?? [];
+  const events = normalizeUpcomingEvents(eventsQuery.data?.events ?? [], eventLimit);
   return (
-    <section className={`calendar-connection connected ${compact ? "compact" : ""}`}>
+    <section
+      className={`calendar-connection connected ${compact ? "compact" : ""}`}
+      aria-label={compact ? "Sidebar calendar" : "Calendar management"}
+    >
       <header>
         <span><CalendarDays size={15} />Upcoming</span>
         <div>
-          <button type="button" aria-label="Refresh calendar" title="Refresh calendar" onClick={() => eventsQuery.refetch()}>
-            <RefreshCw size={14} />
+          <button
+            type="button"
+            aria-label="Refresh calendar"
+            title="Refresh calendar"
+            disabled={eventsQuery.isFetching}
+            onClick={() => eventsQuery.refetch()}
+          >
+            <RefreshCw className={eventsQuery.isFetching ? "spin" : undefined} size={14} />
           </button>
           {!compact ? (
             <button type="button" aria-label="Disconnect calendar" title="Disconnect calendar" onClick={() => disconnect.mutate()}>
@@ -97,7 +112,7 @@ export function CalendarConnection({ compact = false }: CalendarConnectionProps)
           ) : null}
         </div>
       </header>
-      <div className="calendar-event-list">
+      <div className="calendar-event-list" data-testid={compact ? "calendar-sidebar-events" : "calendar-manage-events"}>
         {eventsQuery.isLoading ? <div className="calendar-message">Loading events...</div> : null}
         {eventsQuery.isError ? <div className="calendar-message error">Unable to load events. Reconnect from Settings.</div> : null}
         {!eventsQuery.isLoading && !eventsQuery.isError && !events.length ? <div className="calendar-message">No upcoming events</div> : null}
