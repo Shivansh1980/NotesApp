@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
@@ -721,3 +722,175 @@ def test_google_calendar_http_client_uses_configured_outbound_proxy(monkeypatch)
         "trust_env": True,
         "proxy": "http://proxy.example.test:3128",
     }
+
+
+def test_daily_planner_persists_tasks_and_enforces_status_and_active_task_rules() -> None:
+    _, headers = register_user("planner-owner@example.com")
+    _, outsider_headers = register_user("planner-outsider@example.com")
+    workspace_id = client.get("/api/workspaces", headers=headers).json()[0]["id"]
+
+    first = client.post(
+        "/api/planner/tasks",
+        headers=headers,
+        json={
+            "workspace_id": workspace_id,
+            "title": "Deep work",
+            "description": "Finish the planner API",
+            "plan_date": "2026-09-01",
+            "start_time": "2026-09-01T10:00:00+05:30",
+            "end_time": "2026-09-01T12:00:00+05:30",
+            "status": "in_progress",
+            "category": "work",
+            "priority": "high",
+            "reminders_enabled": True,
+            "reminder_minutes_before": 10,
+            "end_warning_minutes": 5,
+            "notify_at_end": True,
+        },
+    )
+    assert first.status_code == 201, first.text
+    assert first.json()["is_active"] is True
+
+    second = client.post(
+        "/api/planner/tasks",
+        headers=headers,
+        json={
+            "workspace_id": workspace_id,
+            "title": "Review notes",
+            "plan_date": "2026-09-01",
+            "status": "in_progress",
+            "category": "study",
+        },
+    )
+    assert second.status_code == 201, second.text
+    assert second.json()["is_active"] is False
+
+    activated = client.patch(
+        f"/api/planner/tasks/{second.json()['id']}",
+        headers=headers,
+        json={"is_active": True},
+    )
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["status"] == "in_progress"
+    assert activated.json()["is_active"] is True
+
+    listed = client.get(
+        f"/api/planner/tasks?workspace_id={workspace_id}&start_date=2026-09-01&end_date=2026-09-01",
+        headers=headers,
+    )
+    assert listed.status_code == 200, listed.text
+    listed_by_id = {task["id"]: task for task in listed.json()}
+    assert listed_by_id[first.json()["id"]]["is_active"] is False
+    assert listed_by_id[second.json()["id"]]["is_active"] is True
+
+    paused = client.patch(
+        f"/api/planner/tasks/{second.json()['id']}",
+        headers=headers,
+        json={"is_paused": True},
+    )
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["is_paused"] is True
+    assert paused.json()["paused_at"] is not None
+
+    resumed = client.patch(
+        f"/api/planner/tasks/{second.json()['id']}",
+        headers=headers,
+        json={"is_paused": False},
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["is_paused"] is False
+    assert resumed.json()["paused_at"] is None
+
+    completed = client.patch(
+        f"/api/planner/tasks/{second.json()['id']}",
+        headers=headers,
+        json={"status": "completed"},
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["is_active"] is False
+    assert completed.json()["is_paused"] is False
+
+    invalid_schedule = client.post(
+        "/api/planner/tasks",
+        headers=headers,
+        json={
+            "workspace_id": workspace_id,
+            "title": "Broken schedule",
+            "plan_date": "2026-09-01",
+            "start_time": "2026-09-01T14:00:00+05:30",
+        },
+    )
+    assert invalid_schedule.status_code == 422
+
+    forbidden = client.get(
+        f"/api/planner/tasks?workspace_id={workspace_id}&start_date=2026-09-01&end_date=2026-09-01",
+        headers=outsider_headers,
+    )
+    assert forbidden.status_code == 403
+
+
+def test_daily_planner_recurrence_rescheduling_and_deletion() -> None:
+    headers = auth_headers("planner-recurrence@example.com")
+    workspace_id = client.get("/api/workspaces", headers=headers).json()[0]["id"]
+
+    recurring = client.post(
+        "/api/planner/tasks",
+        headers=headers,
+        json={
+            "workspace_id": workspace_id,
+            "title": "Morning study",
+            "plan_date": "2026-09-01",
+            "start_time": "2026-09-01T08:00:00+05:30",
+            "end_time": "2026-09-01T09:00:00+05:30",
+            "category": "study",
+            "recurrence": "daily",
+        },
+    )
+    assert recurring.status_code == 201, recurring.text
+    assert recurring.json()["series_id"] is not None
+
+    occurrences = client.get(
+        f"/api/planner/tasks?workspace_id={workspace_id}&start_date=2026-09-01&end_date=2026-09-04",
+        headers=headers,
+    )
+    assert occurrences.status_code == 200, occurrences.text
+    assert [task["plan_date"] for task in occurrences.json()] == [
+        "2026-09-01",
+        "2026-09-02",
+        "2026-09-03",
+        "2026-09-04",
+    ]
+
+    root_id = recurring.json()["id"]
+    moved = client.patch(
+        f"/api/planner/tasks/{root_id}",
+        headers=headers,
+        json={"plan_date": "2026-09-05"},
+    )
+    assert moved.status_code == 200, moved.text
+    assert datetime.fromisoformat(moved.json()["start_time"]) == datetime.fromisoformat("2026-09-05T08:00:00+05:30")
+    assert datetime.fromisoformat(moved.json()["end_time"]) == datetime.fromisoformat("2026-09-05T09:00:00+05:30")
+
+    moved_day = client.get(
+        f"/api/planner/tasks?workspace_id={workspace_id}&start_date=2026-09-05&end_date=2026-09-05",
+        headers=headers,
+    )
+    assert moved_day.status_code == 200, moved_day.text
+    assert len(moved_day.json()) == 1
+
+    restored_future_occurrence = client.get(
+        f"/api/planner/tasks?workspace_id={workspace_id}&start_date=2027-01-15&end_date=2027-01-15",
+        headers=headers,
+    )
+    assert restored_future_occurrence.status_code == 200, restored_future_occurrence.text
+    assert [task["plan_date"] for task in restored_future_occurrence.json()] == ["2027-01-15"]
+
+    extended = client.post(
+        f"/api/planner/tasks/{root_id}/extend",
+        headers=headers,
+        json={"minutes": 10},
+    )
+    assert extended.status_code == 200, extended.text
+    assert datetime.fromisoformat(extended.json()["end_time"]) == datetime.fromisoformat("2026-09-05T09:10:00+05:30")
+
+    assert client.delete(f"/api/planner/tasks/{root_id}", headers=headers).status_code == 204

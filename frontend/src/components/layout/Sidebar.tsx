@@ -1,4 +1,4 @@
-import { Home, LogOut, MessageSquare, Plus, Search, Settings, Trash2, UserCircle } from "lucide-react";
+import { CalendarRange, Home, LogOut, MessageSquare, Plus, Search, Settings, Trash2, UserCircle } from "lucide-react";
 import { useState } from "react";
 
 import { PageTree } from "./PageTree";
@@ -26,6 +26,8 @@ type SidebarProps = {
   onCopyPageLink: (page: PageTreeNode) => void;
   onOpenPageNewTab: (page: PageTreeNode) => void;
   onUpdatePage: (page: PageTreeNode, payload: PageUpdate) => void;
+  onNavigateHome: () => void;
+  onNavigatePlanner: () => void;
 };
 
 export function Sidebar({
@@ -43,7 +45,9 @@ export function Sidebar({
   onMovePage,
   onCopyPageLink,
   onOpenPageNewTab,
-  onUpdatePage
+  onUpdatePage,
+  onNavigateHome,
+  onNavigatePlanner
 }: SidebarProps) {
   const logout = useAuthStore((state) => state.logout);
   const user = useAuthStore((state) => state.user);
@@ -52,7 +56,7 @@ export function Sidebar({
   const setTrashOpen = useEditorStore((state) => state.setTrashOpen);
   const setCommentsOpen = useEditorStore((state) => state.setCommentsOpen);
   const homeOpen = useEditorStore((state) => state.homeOpen);
-  const setHomeOpen = useEditorStore((state) => state.setHomeOpen);
+  const plannerOpen = useEditorStore((state) => state.plannerOpen);
   const [profileOpen, setProfileOpen] = useState(false);
 
   return (
@@ -91,15 +95,25 @@ export function Sidebar({
         onWorkspaceChange={onWorkspaceChange}
         onCreateWorkspace={onCreateWorkspace}
       />
-      <div className="sidebar-actions">
+      <nav className="sidebar-primary-nav" aria-label="Workspace navigation">
         <button
           className={`sidebar-action-pill ${homeOpen ? "active" : ""}`}
           type="button"
-          onClick={() => setHomeOpen(true)}
+          onClick={onNavigateHome}
         >
           <Home size={17} />
           Home
         </button>
+        <button
+          className={`sidebar-action-pill ${plannerOpen ? "active" : ""}`}
+          type="button"
+          onClick={onNavigatePlanner}
+        >
+          <CalendarRange size={17} />
+          Planner
+        </button>
+      </nav>
+      <div className="sidebar-quick-actions">
         <button className="sidebar-action-icon" type="button" onClick={() => setSearchOpen(true)} aria-label="Search" title="Search">
           <Search size={18} />
         </button>

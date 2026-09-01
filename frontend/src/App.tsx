@@ -5,6 +5,8 @@ import { AuthPanel } from "./components/common/AuthPanel";
 import { EditorPage } from "./components/editor/EditorPage";
 import { AppShell } from "./components/layout/AppShell";
 import { HomeView } from "./components/layout/HomeView";
+import { PlannerReminderHost } from "./components/planner/PlannerReminderHost";
+import { PlannerView } from "./components/planner/PlannerView";
 import { CommentsPanel } from "./components/modals/CommentsPanel";
 import { SearchModal } from "./components/modals/SearchModal";
 import { SettingsModal } from "./components/modals/SettingsModal";
@@ -19,6 +21,7 @@ import type { PageTreeNode } from "./types/page.types";
 import type { Workspace } from "./types/workspace.types";
 import "./styles.css";
 import "./notion-parity.css";
+import "./planner.css";
 
 function flattenPages(pages: PageTreeNode[]): PageTreeNode[] {
   return pages.flatMap((page) => [page, ...flattenPages(page.children)]);
@@ -35,19 +38,35 @@ export default function App() {
   const setPage = useWorkspaceStore((state) => state.setPage);
   const theme = useEditorStore((state) => state.theme);
   const homeOpen = useEditorStore((state) => state.homeOpen);
+  const plannerOpen = useEditorStore((state) => state.plannerOpen);
   const setHomeOpen = useEditorStore((state) => state.setHomeOpen);
+  const setPlannerOpen = useEditorStore((state) => state.setPlannerOpen);
   const setSearchTargetBlock = useEditorStore((state) => state.setSearchTargetBlock);
-  const showHome = homeOpen || !currentPageId;
+  const showPlanner = plannerOpen;
+  const showHome = !showPlanner && (homeOpen || !currentPageId);
 
   const navigateHome = useCallback(() => {
     setPage(null);
     setSearchTargetBlock(null);
     setHomeOpen(true);
+    setPlannerOpen(false);
     const url = new URL(window.location.href);
     url.searchParams.delete("page");
     url.searchParams.delete("block");
+    url.searchParams.delete("view");
+    url.searchParams.delete("date");
     window.history.replaceState(null, "", url);
-  }, [setHomeOpen, setPage, setSearchTargetBlock]);
+  }, [setHomeOpen, setPage, setPlannerOpen, setSearchTargetBlock]);
+
+  const navigatePlanner = useCallback(() => {
+    setPlannerOpen(true);
+    setSearchTargetBlock(null);
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "planner");
+    url.searchParams.delete("page");
+    url.searchParams.delete("block");
+    window.history.replaceState(null, "", url);
+  }, [setPlannerOpen, setSearchTargetBlock]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -55,13 +74,14 @@ export default function App() {
 
   useEffect(() => {
     const url = new URL(window.location.href);
+    if (url.searchParams.get("view") === "planner") setPlannerOpen(true);
     if (!url.searchParams.has("calendar")) return;
     queryClient.invalidateQueries({ queryKey: googleCalendarQueryKeys.status });
     queryClient.invalidateQueries({ queryKey: googleCalendarQueryKeys.eventsRoot });
     url.searchParams.delete("calendar");
     url.searchParams.delete("reason");
     window.history.replaceState(null, "", url);
-  }, [queryClient]);
+  }, [queryClient, setPlannerOpen]);
 
   useEffect(() => {
     void bootstrap();
@@ -86,6 +106,7 @@ export default function App() {
       });
       setWorkspace(workspace.id);
       setHomeOpen(true);
+      setPlannerOpen(false);
       queryClient.invalidateQueries({ queryKey: ["workspaces"] });
     }
   });
@@ -100,6 +121,13 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ["page-tree", page.workspace_id] });
       setPage(page.id);
       setHomeOpen(false);
+      setPlannerOpen(false);
+      const url = new URL(window.location.href);
+      url.searchParams.set("page", page.id);
+      url.searchParams.delete("block");
+      url.searchParams.delete("view");
+      url.searchParams.delete("date");
+      window.history.replaceState(null, "", url);
     }
   });
   const updatePage = useMutation({
@@ -147,12 +175,15 @@ export default function App() {
       setSearchTargetBlock(null);
       setPage(pageId);
       setHomeOpen(false);
+      setPlannerOpen(false);
       const url = new URL(window.location.href);
       url.searchParams.set("page", pageId);
       url.searchParams.delete("block");
+      url.searchParams.delete("view");
+      url.searchParams.delete("date");
       window.history.replaceState(null, "", url);
     },
-    [setHomeOpen, setPage, setSearchTargetBlock]
+    [setHomeOpen, setPage, setPlannerOpen, setSearchTargetBlock]
   );
 
   const copyPageLink = useCallback((page: PageTreeNode) => {
@@ -191,7 +222,7 @@ export default function App() {
   }, [currentWorkspaceId, setWorkspace, workspaces.data]);
 
   useEffect(() => {
-    if (!pages.data) return;
+    if (!pages.data || plannerOpen) return;
     const flatPages = flattenPages(pages.data);
     if (!flatPages.length) {
       if (currentPageId) navigateHome();
@@ -207,7 +238,7 @@ export default function App() {
     if (!currentPageId || !flatPages.some((page) => page.id === currentPageId)) {
       selectPage(flatPages[0].id);
     }
-  }, [currentPageId, navigateHome, pages.data, selectPage, setPage, setSearchTargetBlock]);
+  }, [currentPageId, navigateHome, pages.data, plannerOpen, selectPage, setPage, setSearchTargetBlock]);
 
   if (!bootstrapped) return <div className="boot-screen" />;
   if (!user) return <AuthPanel />;
@@ -218,7 +249,7 @@ export default function App() {
         workspaces={workspaces.data ?? []}
         pages={pages.data ?? []}
         currentWorkspaceId={currentWorkspaceId}
-        currentPageId={showHome ? null : currentPageId}
+        currentPageId={showHome || showPlanner ? null : currentPageId}
         onWorkspaceChange={setWorkspace}
         onCreateWorkspace={() => createWorkspace.mutate()}
         onCreatePage={(parentPageId) => createPage.mutate(parentPageId)}
@@ -230,8 +261,13 @@ export default function App() {
         onCopyPageLink={copyPageLink}
         onOpenPageNewTab={openPageNewTab}
         onUpdatePage={(page, payload) => updatePage.mutate({ pageId: page.id, payload })}
+        onNavigateHome={navigateHome}
+        onNavigatePlanner={navigatePlanner}
+        hideTopBar={showPlanner}
       >
-        {showHome ? (
+        {showPlanner ? (
+          <PlannerView workspaceId={currentWorkspaceId} onNavigateHome={navigateHome} />
+        ) : showHome ? (
           <HomeView
             pages={pages.data ?? []}
             onSelectPage={selectPage}
@@ -249,6 +285,7 @@ export default function App() {
       />
       <TrashModal workspaceId={currentWorkspaceId} />
       <CommentsPanel pageId={currentPageId} />
+      <PlannerReminderHost workspaceId={currentWorkspaceId} />
     </>
   );
 }
