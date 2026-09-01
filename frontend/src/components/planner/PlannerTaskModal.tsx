@@ -10,7 +10,16 @@ import type {
   PlannerTask,
   PlannerTaskStatus
 } from "../../types/planner.types";
-import { combineDateAndTime, timeInputValue } from "../../utils/plannerUtils";
+import {
+  addMinutesToDateTime,
+  combineDateAndTime,
+  dateKey,
+  findScheduleConflict,
+  minutesBetween,
+  PLANNER_DEFAULT_DURATION_MINUTES,
+  PLANNER_DURATION_PRESETS,
+  timeInputValue
+} from "../../utils/plannerUtils";
 
 export type PlannerTaskFormValue = {
   title: string;
@@ -37,7 +46,9 @@ type PlannerTaskModalProps = {
   task: PlannerTask | null;
   date: string;
   suggestedStart?: string | null;
+  suggestedDuration?: number;
   suggestedStatus?: PlannerTaskStatus;
+  existingTasks?: PlannerTask[];
   pending?: boolean;
   onClose: () => void;
   onSave: (value: PlannerTaskFormValue) => void;
@@ -46,10 +57,10 @@ type PlannerTaskModalProps = {
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function addHour(time: string): string {
-  const [hours, minutes] = time.split(":").map(Number);
-  const value = (hours * 60 + minutes + 60) % (24 * 60);
-  return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+function endTimeLabel(value: string, planDate: string): string {
+  const end = new Date(value);
+  const label = end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return dateKey(end) === planDate ? label : `${label} next day`;
 }
 
 export function PlannerTaskModal({
@@ -57,7 +68,9 @@ export function PlannerTaskModal({
   task,
   date,
   suggestedStart,
+  suggestedDuration = PLANNER_DEFAULT_DURATION_MINUTES,
   suggestedStatus = "todo",
+  existingTasks = [],
   pending = false,
   onClose,
   onSave,
@@ -68,7 +81,7 @@ export function PlannerTaskModal({
   const [planDate, setPlanDate] = useState(date);
   const [scheduled, setScheduled] = useState(Boolean(suggestedStart));
   const [startTime, setStartTime] = useState(suggestedStart ?? "09:00");
-  const [endTime, setEndTime] = useState(addHour(suggestedStart ?? "09:00"));
+  const [durationMinutes, setDurationMinutes] = useState(suggestedDuration);
   const [status, setStatus] = useState<PlannerTaskStatus>("todo");
   const [category, setCategory] = useState<PlannerCategory>("work");
   const [priority, setPriority] = useState<PlannerPriority>("medium");
@@ -89,7 +102,9 @@ export function PlannerTaskModal({
     setPlanDate(task?.plan_date ?? date);
     setScheduled(Boolean(task?.start_time || suggestedStart));
     setStartTime(nextStart || "09:00");
-    setEndTime(task ? timeInputValue(task.end_time) || addHour(nextStart || "09:00") : addHour(nextStart || "09:00"));
+    setDurationMinutes(task
+      ? Math.max(1, minutesBetween(task.start_time, task.end_time) || suggestedDuration)
+      : suggestedDuration);
     setStatus(task?.status ?? suggestedStatus);
     setCategory((task?.category as PlannerCategory) ?? "work");
     setPriority(task?.priority ?? "medium");
@@ -101,7 +116,7 @@ export function PlannerTaskModal({
     setRecurrenceDays(task?.recurrence_days ?? []);
     setError(null);
     setConfirmDelete(false);
-  }, [date, open, suggestedStart, suggestedStatus, task]);
+  }, [date, open, suggestedDuration, suggestedStart, suggestedStatus, task]);
 
   useEffect(() => {
     if (!open) return;
@@ -128,10 +143,15 @@ export function PlannerTaskModal({
       setError("Give this task a clear title.");
       return;
     }
+    if (scheduled && (!Number.isFinite(durationMinutes) || durationMinutes < 1 || durationMinutes > 12 * 60)) {
+      setError("Duration must be between 1 minute and 12 hours.");
+      return;
+    }
     const start = scheduled ? combineDateAndTime(planDate, startTime) : null;
-    const end = scheduled ? combineDateAndTime(planDate, endTime) : null;
-    if (start && end && new Date(end) <= new Date(start)) {
-      setError("End time must be after the start time.");
+    const end = scheduled ? addMinutesToDateTime(planDate, startTime, durationMinutes) : null;
+    const conflict = start && end ? findScheduleConflict(existingTasks, start, end, task?.id) : null;
+    if (conflict) {
+      setError(`This time overlaps "${conflict.title}". Choose another start time or duration.`);
       return;
     }
     if (recurrence === "custom" && recurrenceDays.length === 0) {
@@ -159,6 +179,10 @@ export function PlannerTaskModal({
     });
   };
 
+  const calculatedEnd = scheduled && durationMinutes > 0
+    ? addMinutesToDateTime(planDate, startTime, durationMinutes)
+    : null;
+
   return (
     <div className="planner-modal-backdrop" onMouseDown={onClose}>
       <section
@@ -176,7 +200,7 @@ export function PlannerTaskModal({
           <IconButton label="Close task editor" onClick={onClose}><X size={18} /></IconButton>
         </header>
 
-        <form onSubmit={submit}>
+        <form noValidate onSubmit={submit}>
           <label className="planner-field planner-title-field">
             <span>Task title</span>
             <input autoFocus value={title} maxLength={200} placeholder="What needs your attention?" onChange={(event) => setTitle(event.target.value)} />
@@ -211,13 +235,47 @@ export function PlannerTaskModal({
 
           <section className="planner-form-section">
             <div className="planner-section-toggle">
-              <div><Clock3 size={16} /><span><strong>Schedule</strong><small>Assign a start and end time</small></span></div>
+              <div><Clock3 size={16} /><span><strong>Schedule</strong><small>Choose a start time and duration</small></span></div>
               <button className={`switch-control ${scheduled ? "on" : ""}`} type="button" role="switch" aria-label="Schedule task" aria-checked={scheduled} onClick={() => setScheduled((value) => !value)}><span /></button>
             </div>
             {scheduled ? (
-              <div className="planner-form-row two indented">
+              <div className="planner-schedule-fields indented">
                 <label className="planner-field"><span>Starts</span><input type="time" step={900} value={startTime} onChange={(event) => setStartTime(event.target.value)} /></label>
-                <label className="planner-field"><span>Ends</span><input type="time" step={900} value={endTime} onChange={(event) => setEndTime(event.target.value)} /></label>
+                <div className="planner-duration-field">
+                  <span>Duration</span>
+                  <div className="planner-duration-controls">
+                    <div className="planner-duration-presets" aria-label="Task duration presets">
+                      {PLANNER_DURATION_PRESETS.map((minutes) => (
+                        <button
+                          className={durationMinutes === minutes ? "selected" : ""}
+                          type="button"
+                          key={minutes}
+                          aria-pressed={durationMinutes === minutes}
+                          onClick={() => setDurationMinutes(minutes)}
+                        >
+                          {minutes}m
+                        </button>
+                      ))}
+                    </div>
+                    <label className="planner-custom-duration">
+                      <input
+                        aria-label="Custom duration in minutes"
+                        type="number"
+                        min={1}
+                        max={720}
+                        step={1}
+                        value={durationMinutes}
+                        onChange={(event) => setDurationMinutes(Number(event.target.value))}
+                      />
+                      <span>min</span>
+                    </label>
+                  </div>
+                </div>
+                {calculatedEnd ? (
+                  <div className="planner-calculated-end" aria-live="polite">
+                    <Clock3 size={14} />Ends at <strong>{endTimeLabel(calculatedEnd, planDate)}</strong>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </section>

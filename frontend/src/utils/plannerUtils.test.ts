@@ -2,10 +2,16 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { PlannerTask } from "../types/planner.types";
 import {
+  addMinutesToDateTime,
   calculateTaskReminders,
+  combineDateAndTime,
+  findScheduleConflict,
   readReminderLedger,
   rememberReminder,
-  statusTransitionPatch
+  remainingTimeCountdown,
+  statusTransitionPatch,
+  suggestedTaskStartTime,
+  timeInputValue
 } from "./plannerUtils";
 
 function task(overrides: Partial<PlannerTask> = {}): PlannerTask {
@@ -76,5 +82,85 @@ describe("planner status transitions", () => {
       is_active: false,
       is_paused: false
     });
+  });
+});
+
+describe("planner focus countdown", () => {
+  it("shows a live second-level countdown and overdue state", () => {
+    const end = new Date("2026-09-01T10:01:05.000Z");
+    const countdownTask = task({ end_time: end.toISOString() });
+
+    expect(remainingTimeCountdown(countdownTask, new Date("2026-09-01T10:00:00.000Z").getTime())).toBe("01:05 remaining");
+    expect(remainingTimeCountdown(countdownTask, new Date("2026-09-01T10:01:10.000Z").getTime())).toBe("00:05 overdue");
+  });
+
+  it("freezes at the paused timestamp", () => {
+    const countdownTask = task({
+      end_time: "2026-09-01T11:00:00.000Z",
+      is_paused: true,
+      paused_at: "2026-09-01T10:42:30.000Z"
+    });
+
+    expect(remainingTimeCountdown(countdownTask, new Date("2026-09-01T10:59:00.000Z").getTime())).toBe("17:30 paused");
+  });
+});
+
+describe("planner scheduling", () => {
+  it("rounds a new task up to the next quarter hour", () => {
+    const start = suggestedTaskStartTime("2026-09-01", [], {
+      now: new Date(2026, 8, 1, 13, 46, 12)
+    });
+
+    expect(start).toBe("14:00");
+    expect(timeInputValue(addMinutesToDateTime("2026-09-01", start, 15))).toBe("14:15");
+  });
+
+  it("starts after the end of an overlapping task", () => {
+    const existing = task({
+      start_time: combineDateAndTime("2026-09-01", "14:00"),
+      end_time: combineDateAndTime("2026-09-01", "14:30")
+    });
+
+    expect(suggestedTaskStartTime("2026-09-01", [existing], {
+      now: new Date(2026, 8, 1, 13, 46)
+    })).toBe("14:30");
+  });
+
+  it("walks through chained overlaps to find the first available slot", () => {
+    const tasks = [
+      task({
+        id: "task-a",
+        start_time: combineDateAndTime("2026-09-01", "14:00"),
+        end_time: combineDateAndTime("2026-09-01", "14:20")
+      }),
+      task({
+        id: "task-b",
+        start_time: combineDateAndTime("2026-09-01", "14:15"),
+        end_time: combineDateAndTime("2026-09-01", "14:50")
+      })
+    ];
+
+    expect(suggestedTaskStartTime("2026-09-01", tasks, {
+      requestedStart: "14:00",
+      durationMinutes: 15
+    })).toBe("15:00");
+  });
+
+  it("detects overlaps while allowing adjacent tasks", () => {
+    const existing = task({
+      start_time: combineDateAndTime("2026-09-01", "10:00"),
+      end_time: combineDateAndTime("2026-09-01", "10:30")
+    });
+
+    expect(findScheduleConflict(
+      [existing],
+      combineDateAndTime("2026-09-01", "10:15"),
+      combineDateAndTime("2026-09-01", "10:45")
+    )?.id).toBe(existing.id);
+    expect(findScheduleConflict(
+      [existing],
+      combineDateAndTime("2026-09-01", "10:30"),
+      combineDateAndTime("2026-09-01", "10:45")
+    )).toBeNull();
   });
 });

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import { PlannerCategoryIcon } from "./PlannerCategoryIcon";
 import type { PlannerTask } from "../../types/planner.types";
-import { formatDuration, formatTaskTime, minutesBetween, plannerProgress, remainingTimeLabel } from "../../utils/plannerUtils";
+import { formatDuration, formatTaskTime, minutesBetween, plannerProgress, remainingTimeCountdown } from "../../utils/plannerUtils";
 
 type PlannerFocusProps = {
   task: PlannerTask | null;
@@ -18,12 +18,15 @@ type PlannerFocusProps = {
 export function PlannerFocus({ task, expanded, onToggleExpanded, onPause, onComplete, onExtend, onEdit }: PlannerFocusProps) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
+    setNow(Date.now());
+    if (!task || task.is_paused) return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [task?.id, task?.is_paused]);
 
   const progress = task ? plannerProgress(task, now) : 0;
   const duration = task ? minutesBetween(task.start_time, task.end_time) : 0;
+  const countdown = task ? remainingTimeCountdown(task, now) : "";
 
   return (
     <section className={`planner-panel planner-focus-panel ${expanded ? "planner-panel-expanded" : ""}`} aria-labelledby="planner-focus-heading">
@@ -36,7 +39,12 @@ export function PlannerFocus({ task, expanded, onToggleExpanded, onPause, onComp
           <div className={`planner-focus-icon category-${task.category}`}><PlannerCategoryIcon category={task.category} size={32} /></div>
           <div className="planner-focus-copy">
             <strong>{task.title}</strong>
-            <span className={task.end_time && new Date(task.end_time).getTime() < now ? "overdue" : ""}>{remainingTimeLabel(task, now)}</span>
+            <span
+              className={`planner-focus-countdown ${task.end_time && new Date(task.end_time).getTime() < now ? "overdue" : ""}`}
+              aria-label={countdown}
+            >
+              <Clock3 size={14} />{countdown}
+            </span>
             <small>{formatTaskTime(task)}</small>
           </div>
           <button className="planner-edit-focus" type="button" aria-label="Edit current task" onClick={() => onEdit(task)}><Pencil size={15} /></button>
