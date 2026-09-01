@@ -8,12 +8,13 @@ import type { PlannerTask } from "../../types/planner.types";
 import {
   formatDuration,
   minutesBetween,
+  PLANNER_DEFAULT_DURATION_MINUTES,
   PLANNER_DAY_END_HOUR,
   PLANNER_DAY_START_HOUR,
   PLANNER_SLOT_MINUTES
 } from "../../utils/plannerUtils";
 
-const PIXELS_PER_HOUR = 48;
+const PIXELS_PER_HOUR = 72;
 
 type PlannerScheduleProps = {
   date: string;
@@ -70,7 +71,10 @@ function ScheduledTask({
   onEdit: () => void;
   onResize: (minutes: number) => void;
 }) {
-  const initialDuration = Math.max(30, minutesBetween(task.start_time, task.end_time));
+  const initialDuration = Math.max(
+    PLANNER_DEFAULT_DURATION_MINUTES,
+    minutesBetween(task.start_time, task.end_time) || PLANNER_DEFAULT_DURATION_MINUTES
+  );
   const [previewDuration, setPreviewDuration] = useState<number | null>(null);
   const duration = previewDuration ?? initialDuration;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -78,7 +82,8 @@ function ScheduledTask({
     data: { kind: "task", taskId: task.id, source: "schedule" }
   });
   const top = Math.max(0, (minutesFromStart(task.start_time as string) / 60) * PIXELS_PER_HOUR);
-  const height = Math.max(44, (duration / 60) * PIXELS_PER_HOUR - 4);
+  const compact = duration <= PLANNER_DEFAULT_DURATION_MINUTES;
+  const height = Math.max(compact ? 18 : 36, (duration / 60) * PIXELS_PER_HOUR - 2);
 
   const beginResize = (event: PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -103,7 +108,7 @@ function ScheduledTask({
   return (
     <article
       ref={setNodeRef}
-      className={`planner-scheduled-task category-${task.category} ${task.status === "completed" ? "completed" : ""} ${isDragging ? "dragging" : ""}`}
+      className={`planner-scheduled-task category-${task.category} ${compact ? "compact" : ""} ${task.status === "completed" ? "completed" : ""} ${isDragging ? "dragging" : ""}`}
       style={{ top, height, transform: CSS.Translate.toString(transform) }}
       onClick={onEdit}
       data-task-id={task.id}

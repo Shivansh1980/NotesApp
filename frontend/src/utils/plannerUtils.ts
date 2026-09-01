@@ -8,6 +8,9 @@ import type {
 export const PLANNER_DAY_START_HOUR = 6;
 export const PLANNER_DAY_END_HOUR = 23;
 export const PLANNER_SLOT_MINUTES = 30;
+export const PLANNER_DEFAULT_DURATION_MINUTES = 15;
+export const PLANNER_TIME_INCREMENT_MINUTES = 15;
+export const PLANNER_DURATION_PRESETS = [15, 30, 45, 60] as const;
 
 export function dateKey(value: Date): string {
   const year = value.getFullYear();
@@ -34,6 +37,12 @@ export function combineDateAndTime(day: string, time: string): string {
   return value.toISOString();
 }
 
+export function addMinutesToDateTime(day: string, time: string, durationMinutes: number): string {
+  const start = new Date(combineDateAndTime(day, time));
+  start.setMinutes(start.getMinutes() + durationMinutes);
+  return start.toISOString();
+}
+
 export function timeInputValue(value: string | null): string {
   if (!value) return "";
   const date = new Date(value);
@@ -45,6 +54,113 @@ export function minutesBetween(start: string | null, end: string | null): number
   if (!start || !end) return 0;
   const duration = new Date(end).getTime() - new Date(start).getTime();
   return Math.max(0, Math.round(duration / 60_000));
+}
+
+function clockMinutes(value: Date): number {
+  return value.getHours() * 60 + value.getMinutes();
+}
+
+function timeFromMinutes(value: number): string {
+  const normalized = Math.max(0, Math.min(24 * 60 - 1, value));
+  return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
+}
+
+function roundUpToIncrement(value: number, increment: number): number {
+  return Math.ceil(value / increment) * increment;
+}
+
+type ScheduledInterval = {
+  start: number;
+  end: number;
+};
+
+function scheduledIntervals(tasks: PlannerTask[], day: string, excludeTaskId?: string): ScheduledInterval[] {
+  const dayStart = dateFromKey(day).getTime();
+  const dayEnd = addDays(day, 1);
+  const dayEndTime = dateFromKey(dayEnd).getTime();
+
+  return tasks
+    .filter((task) => task.id !== excludeTaskId && task.start_time && task.end_time)
+    .map((task) => ({
+      start: (new Date(task.start_time as string).getTime() - dayStart) / 60_000,
+      end: (new Date(task.end_time as string).getTime() - dayStart) / 60_000
+    }))
+    .filter((interval) => interval.end > 0 && interval.start < (dayEndTime - dayStart) / 60_000)
+    .map((interval) => ({
+      start: Math.max(0, interval.start),
+      end: Math.min(24 * 60, interval.end)
+    }))
+    .sort((left, right) => left.start - right.start);
+}
+
+function findOpenSlot(
+  intervals: ScheduledInterval[],
+  rangeStart: number,
+  rangeEnd: number,
+  durationMinutes: number
+): number | null {
+  let candidate = roundUpToIncrement(rangeStart, PLANNER_TIME_INCREMENT_MINUTES);
+
+  for (const interval of intervals) {
+    if (interval.end <= candidate) continue;
+    if (candidate + durationMinutes <= interval.start) break;
+    if (candidate < interval.end && candidate + durationMinutes > interval.start) {
+      candidate = roundUpToIncrement(interval.end, PLANNER_TIME_INCREMENT_MINUTES);
+    }
+  }
+
+  return candidate + durationMinutes <= rangeEnd ? candidate : null;
+}
+
+export function suggestedTaskStartTime(
+  day: string,
+  tasks: PlannerTask[],
+  options: {
+    now?: Date;
+    requestedStart?: string | null;
+    durationMinutes?: number;
+    excludeTaskId?: string;
+  } = {}
+): string {
+  const now = options.now ?? new Date();
+  const durationMinutes = Math.max(1, options.durationMinutes ?? PLANNER_DEFAULT_DURATION_MINUTES);
+  const requested = options.requestedStart
+    ? clockMinutes(new Date(combineDateAndTime(day, options.requestedStart)))
+    : null;
+  const preferred = requested ?? (day === dateKey(now)
+    ? roundUpToIncrement(clockMinutes(now), PLANNER_TIME_INCREMENT_MINUTES)
+    : 9 * 60);
+  const latestStart = 24 * 60 - durationMinutes;
+  const boundedPreferred = Math.min(preferred, latestStart);
+  const intervals = scheduledIntervals(tasks, day, options.excludeTaskId);
+  const afterPreferred = findOpenSlot(intervals, boundedPreferred, 24 * 60, durationMinutes);
+
+  if (afterPreferred !== null) return timeFromMinutes(afterPreferred);
+
+  const beforePreferred = findOpenSlot(
+    intervals,
+    PLANNER_DAY_START_HOUR * 60,
+    boundedPreferred,
+    durationMinutes
+  );
+  return timeFromMinutes(beforePreferred ?? boundedPreferred);
+}
+
+export function findScheduleConflict(
+  tasks: PlannerTask[],
+  startTime: string,
+  endTime: string,
+  excludeTaskId?: string
+): PlannerTask | null {
+  const start = new Date(startTime).getTime();
+  const end = new Date(endTime).getTime();
+
+  return tasks.find((task) => {
+    if (task.id === excludeTaskId || !task.start_time || !task.end_time) return false;
+    const taskStart = new Date(task.start_time).getTime();
+    const taskEnd = new Date(task.end_time).getTime();
+    return start < taskEnd && end > taskStart;
+  }) ?? null;
 }
 
 export function formatDuration(minutes: number): string {
@@ -77,6 +193,22 @@ export function remainingTimeLabel(task: PlannerTask, now = Date.now()): string 
   if (remaining < 0) return `${Math.abs(remaining)} min overdue`;
   if (remaining === 0) return "Ending now";
   return `${formatDuration(remaining)} remaining`;
+}
+
+export function remainingTimeCountdown(task: PlannerTask, now = Date.now()): string {
+  if (!task.end_time) return "No end time";
+  const effectiveNow = task.is_paused && task.paused_at ? new Date(task.paused_at).getTime() : now;
+  const difference = new Date(task.end_time).getTime() - effectiveNow;
+  const totalSeconds = Math.max(0, Math.ceil(Math.abs(difference) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const clock = hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+
+  if (task.is_paused) return `${clock} paused`;
+  return difference < 0 ? `${clock} overdue` : `${clock} remaining`;
 }
 
 export function statusTransitionPatch(

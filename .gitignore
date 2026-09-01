@@ -5,9 +5,11 @@
 backend/.venv/
 backend/.env
 backend/notes_app.db
+backend/notes_app.local.db
 backend/test_notes_app.db
 backend/storage/uploads/*
 !backend/storage/uploads/.gitkeep
+backend/storage/local-uploads/
 
 # Frontend
 frontend/node_modules/
@@ -20,3 +22,4 @@ frontend/vite.config.d.ts
 # Local runtime output
 *.log
 artifacts/
+.dev-runtime/

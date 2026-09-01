@@ -21,6 +21,8 @@ import {
   dateFromKey,
   dateKey,
   minutesBetween,
+  PLANNER_DEFAULT_DURATION_MINUTES,
+  suggestedTaskStartTime,
   statusTransitionPatch
 } from "../../utils/plannerUtils";
 
@@ -64,10 +66,13 @@ export function PlannerView({ workspaceId, onNavigateHome }: PlannerViewProps) {
 
   const openCreate = useCallback((options?: { start?: string | null; status?: PlannerTaskStatus }) => {
     setEditingTask(null);
-    setSuggestedStart(options?.start ?? null);
+    setSuggestedStart(suggestedTaskStartTime(selectedDate, tasks, {
+      requestedStart: options?.start,
+      durationMinutes: PLANNER_DEFAULT_DURATION_MINUTES
+    }));
     setSuggestedStatus(options?.status ?? "todo");
     setModalOpen(true);
-  }, []);
+  }, [selectedDate, tasks]);
   const openEdit = useCallback((task: PlannerTask) => {
     setEditingTask(task);
     setSuggestedStart(null);
@@ -140,8 +145,16 @@ export function PlannerView({ workspaceId, onNavigateHome }: PlannerViewProps) {
       return;
     }
     if (target.kind === "schedule") {
-      const duration = Math.max(30, minutesBetween(task.start_time, task.end_time) || 60);
-      const start = combineDateAndTime(target.date as string, target.time as string);
+      const duration = Math.max(
+        PLANNER_DEFAULT_DURATION_MINUTES,
+        minutesBetween(task.start_time, task.end_time) || PLANNER_DEFAULT_DURATION_MINUTES
+      );
+      const startTime = suggestedTaskStartTime(target.date as string, tasks, {
+        requestedStart: target.time as string,
+        durationMinutes: duration,
+        excludeTaskId: task.id
+      });
+      const start = combineDateAndTime(target.date as string, startTime);
       const end = new Date(new Date(start).getTime() + duration * 60_000).toISOString();
       updateTask.mutate({ taskId: task.id, payload: { plan_date: target.date as string, start_time: start, end_time: end } });
     }
@@ -229,7 +242,9 @@ export function PlannerView({ workspaceId, onNavigateHome }: PlannerViewProps) {
         task={editingTask}
         date={selectedDate}
         suggestedStart={suggestedStart}
+        suggestedDuration={PLANNER_DEFAULT_DURATION_MINUTES}
         suggestedStatus={suggestedStatus}
+        existingTasks={tasks}
         pending={pending}
         onClose={() => setModalOpen(false)}
         onSave={saveTask}
