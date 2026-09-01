@@ -19,6 +19,7 @@ type EditorState = {
   trashOpen: boolean;
   commentsOpen: boolean;
   homeOpen: boolean;
+  plannerOpen: boolean;
   theme: "dark" | "light";
   setSelectedBlocks: (ids: string[]) => void;
   setFocusedBlock: (id: string | null) => void;
@@ -30,6 +31,7 @@ type EditorState = {
   setTrashOpen: (open: boolean) => void;
   setCommentsOpen: (open: boolean) => void;
   setHomeOpen: (open: boolean) => void;
+  setPlannerOpen: (open: boolean) => void;
   setTheme: (theme: "dark" | "light") => void;
   toggleTheme: () => void;
 };
@@ -45,6 +47,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   trashOpen: false,
   commentsOpen: false,
   homeOpen: false,
+  plannerOpen: false,
   theme: (localStorage.getItem("notes.theme") as "dark" | "light" | null) ?? "dark",
   setSelectedBlocks: (ids) => set({ selectedBlockIds: ids }),
   setFocusedBlock: (id) => set({ focusedBlockId: id }),
@@ -55,7 +58,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   setTrashOpen: (open) => set({ trashOpen: open }),
   setCommentsOpen: (open) => set({ commentsOpen: open }),
-  setHomeOpen: (open) => set({ homeOpen: open }),
+  setHomeOpen: (open) => set((state) => ({ homeOpen: open, plannerOpen: open ? false : state.plannerOpen })),
+  setPlannerOpen: (open) => set((state) => ({ plannerOpen: open, homeOpen: open ? false : state.homeOpen })),
   setTheme(theme) {
     localStorage.setItem("notes.theme", theme);
     document.documentElement.dataset.theme = theme;

@@ -1,10 +1,10 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import JSON
+from sqlalchemy.types import JSON, TypeDecorator
 
 from app.core.database import Base
 
@@ -18,6 +18,27 @@ def now_utc() -> datetime:
 
 
 JsonType = JSON().with_variant(JSONB, "postgresql")
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """Persist instants consistently when SQLite drops timezone metadata."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 class TimestampMixin:
@@ -54,6 +75,43 @@ class CalendarConnection(Base, TimestampMixin):
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text)
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     scopes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+
+class PlannerTask(Base, TimestampMixin):
+    __tablename__ = "planner_tasks"
+    __table_args__ = (
+        Index("idx_planner_tasks_workspace_date", "workspace_id", "plan_date"),
+        Index("idx_planner_tasks_user_date", "user_id", "plan_date"),
+        Index("idx_planner_tasks_series", "series_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    series_id: Mapped[str | None] = mapped_column(String(36))
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    plan_date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_time: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    end_time: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    status: Mapped[str] = mapped_column(String(20), default="todo", nullable=False)
+    category: Mapped[str] = mapped_column(String(40), default="work", nullable=False)
+    priority: Mapped[str] = mapped_column(String(20), default="medium", nullable=False)
+    reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reminder_minutes_before: Mapped[int | None] = mapped_column(Integer)
+    end_warning_minutes: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    notify_at_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    recurrence: Mapped[str] = mapped_column(String(20), default="none", nullable=False)
+    recurrence_days: Mapped[list] = mapped_column(JsonType, default=list, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    paused_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    total_paused_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class Workspace(Base, TimestampMixin):

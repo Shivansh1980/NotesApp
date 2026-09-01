@@ -22,6 +22,9 @@ type AppShellProps = {
   onCopyPageLink: (page: PageTreeNode) => void;
   onOpenPageNewTab: (page: PageTreeNode) => void;
   onUpdatePage: (page: PageTreeNode, payload: PageUpdate) => void;
+  onNavigateHome: () => void;
+  onNavigatePlanner: () => void;
+  hideTopBar?: boolean;
   children: ReactNode;
 };
 
@@ -42,8 +45,8 @@ export function AppShell(props: AppShellProps) {
   return (
     <div className="app-shell">
       <Sidebar {...props} />
-      <main className="app-main">
-        <PageTopBar
+      <main className={`app-main ${props.hideTopBar ? "planner-main" : ""}`}>
+        {!props.hideTopBar ? <PageTopBar
           breadcrumbs={breadcrumbs}
           currentPage={currentPage}
           onSelectPage={props.onSelectPage}
@@ -52,7 +55,7 @@ export function AppShell(props: AppShellProps) {
           onCopyPageLink={props.onCopyPageLink}
           onOpenPageNewTab={props.onOpenPageNewTab}
           onUpdatePage={props.onUpdatePage}
-        />
+        /> : null}
         {props.children}
       </main>
     </div>
